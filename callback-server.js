@@ -1,8 +1,11 @@
 import fetch from "node-fetch";
 import express from "express";
 import crypto from "node:crypto";
+import cors from "cors";
 
 const app = express();
+app.use(cors()); // Allows your website to talk to this backend
+
 const PORT = process.env.PORT || 3000;
 const CALLBACK_SECRET = process.env.MUSIC_CALLBACK_SECRET;
 
