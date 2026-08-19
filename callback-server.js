@@ -27,7 +27,7 @@ function verifySignature(rawBody, timestamp, receivedSignature) {
 
 app.use(express.text({ type: "*/*" }));
 
-// Endpoint to receive generation requests from your website and forward to Make.com
+// 1. Trigger generation via Make.com
 app.post('/api/generate', async (req, res) => {
     try {
         const payload = JSON.parse(req.body);
@@ -50,6 +50,7 @@ app.post('/api/generate', async (req, res) => {
     }
 });
 
+// 2. Receive completed song data from MusicAPI callback and save it
 app.post("/api/music-callback", async (req, res) => {
     const rawBody = req.body;
     const timestamp = req.headers["x-musicapi-timestamp"];
@@ -80,15 +81,17 @@ app.post("/api/music-callback", async (req, res) => {
 
     if (taskId) {
         songs.set(taskId, payload);
+        console.log("Saved completed song for task:", taskId);
     }
 
     return res.status(200).json({ received: true, task_id: taskId });
 });
 
+// 3. Frontend polls this endpoint to see if the song is ready
 app.get("/api/song/:taskId", (req, res) => {
     const song = songs.get(req.params.taskId);
     if (!song) {
-        return res.status(404).json({ error: "Song not found", task_id: req.params.taskId });
+        return res.status(404).json({ error: "Song not ready yet", task_id: req.params.taskId });
     }
     res.status(200).json(song);
 });
