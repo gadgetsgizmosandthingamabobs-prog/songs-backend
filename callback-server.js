@@ -173,3 +173,36 @@ app.get("/api/song/:taskId", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Callback server listening on port ${PORT}`);
 });
+// Endpoint to receive generation requests from your website and call MusicAPI
+app.post('/api/generate', async (req, res) => {
+    try {
+        const { prompt, genre, title } = req.body;
+
+        // Call MusicAPI to start generating the song
+        const musicApiResponse = await fetch('https://api.musicapi.ai/v1/generate', { // Replace with your actual MusicAPI endpoint
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.MUSIC_API_KEY}` // Ensure you have your API key set in Render env vars
+            },
+            body: JSON.stringify({
+                prompt: prompt,
+                tags: genre,
+                title: title,
+                callback_url: 'https://songs-backend-kbfk.onrender.com/api/music-callback'
+            })
+        });
+
+        const data = await musicApiResponse.json();
+        
+        if (!musicApiResponse.ok) {
+            return res.status(musicApiResponse.status).json(data);
+        }
+
+        // Return the task_id back to your website so it can redirect to the preview page
+        res.status(200).json(data);
+    } catch (error) {
+        console.error('Error generating song:', error);
+        res.status(500).json({ error: 'Failed to trigger song generation' });
+    }
+});
