@@ -1,11 +1,15 @@
 {
-  "name": "songs-from-your-heart-callback",
+  "name": "songs-backend",
   "version": "1.0.0",
+  "description": "MusicAPI callback and generation backend",
+  "main": "callback-server.js",
   "type": "module",
   "scripts": {
     "start": "node callback-server.js"
   },
   "dependencies": {
-    "express": "^5.1.0"
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2"
   }
 }
