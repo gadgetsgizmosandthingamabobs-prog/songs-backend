@@ -28,35 +28,28 @@ function verifySignature(rawBody, timestamp, receivedSignature) {
 
 app.use(express.text({ type: "*/*" }));
 
-// Endpoint to receive generation requests from your website and call MusicAPI
+// Endpoint to receive generation requests from your website and forward to Make.com
 app.post('/api/generate', async (req, res) => {
     try {
-        const { prompt, genre, title } = JSON.parse(req.body);
+        const payload = JSON.parse(req.body);
 
-        const musicApiResponse = await fetch('https://api.musicapi.ai/v1/generate', {
+        // Forward the generation request straight to your Make.com scenario webhook
+        const makeResponse = await fetch('https://hook.us2.make.com/7ijspklghp74sye2tcj3xyj0lheewi5d', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${process.env.MUSIC_API_KEY}`
+                'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                prompt: prompt,
-                tags: genre,
-                title: title,
-                callback_url: 'https://songs-backend-kbfk.onrender.com/api/music-callback'
-            })
+            body: JSON.stringify(payload)
         });
 
-        const data = await musicApiResponse.json();
-        
-        if (!musicApiResponse.ok) {
-            return res.status(musicApiResponse.status).json(data);
+        if (!makeResponse.ok) {
+            return res.status(500).json({ error: 'Failed to trigger Make.com scenario' });
         }
 
-        res.status(200).json(data);
+        res.status(200).json({ success: true, message: 'Generation triggered successfully' });
     } catch (error) {
-        console.error('Error generating song:', error);
-        res.status(500).json({ error: 'Failed to trigger song generation' });
+        console.error('Error forwarding generation:', error);
+        res.status(500).json({ error: 'Failed to process generation request' });
     }
 });
 
