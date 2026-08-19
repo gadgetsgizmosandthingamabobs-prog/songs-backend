@@ -1,3 +1,4 @@
+import fetch from "node-fetch";
 import express from "express";
 import crypto from "node:crypto";
 
@@ -109,6 +110,16 @@ app.post(
 
       const payload = JSON.parse(rawBody);
       const taskId = payload.task_id;
+      // Forward payload to Make.com webhook
+try {
+    await fetch('https://hook.us2.make.com/uq64mkqbta2m2h9hph4obhg7o4b5adhy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: rawBody
+    });
+} catch (forwardError) {
+    console.error('Failed to forward to Make.com:', forwardError);
+}
 
       if (!taskId) {
         return res.status(400).json({
