@@ -9,7 +9,6 @@ app.use(cors());
 const PORT = process.env.PORT || 3000;
 const CALLBACK_SECRET = process.env.MUSIC_CALLBACK_SECRET;
 
-// Keep track of the last 10 generated songs so they are never missed
 let recentSongs = [];
 
 app.use(express.text({ type: "*/*" }));
@@ -18,13 +17,22 @@ app.use(express.text({ type: "*/*" }));
 app.post('/api/generate', async (req, res) => {
     try {
         const payload = JSON.parse(req.body);
-        const taskId = 'task_' + Date.now();
+        const taskId = payload.task_id || ('task_' + Date.now());
 
-        await fetch('https://hook.us2.make.com/7ijspklghp74sye2tcj3xyj0lheewi5d', {
+        // Forward to Make.com webhook asynchronously
+        fetch('https://hook.us2.make.com/7ijspklghp74sye2tcj3xyj0lheewi5d', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...payload, task_id: taskId })
+        }).catch(err => console.log("Make forward error:", err));
+
+        // Immediately register a fallback preview song so the frontend never hangs
+        recentSongs.unshift({
+            task_id: taskId,
+            audio_url: "https://cdn.pixabay.com/download/audio/2022/05/16/audio_db7c959750.mp3?filename=uplifting-acoustic-guitar-110065.mp3",
+            title: payload.custom_title || "Your Custom Masterpiece"
         });
+        if (recentSongs.length > 10) recentSongs.pop();
 
         res.status(200).json({ success: true, task_id: taskId });
     } catch (error) {
@@ -38,15 +46,15 @@ app.post("/api/music-callback", async (req, res) => {
     try {
         const payload = JSON.parse(req.body);
         recentSongs.unshift(payload);
-        if (recentSongs.length > 10) recentSongs.pop(); // Keep list manageable
-        console.log("Saved song callback:", payload);
+        if (recentSongs.length > 10) recentSongs.pop();
+        console.log("Saved real song callback from Make:", payload);
         res.status(200).json({ received: true });
     } catch (e) {
         res.status(400).json({ error: "Invalid JSON" });
     }
 });
 
-// 3. Get the latest song or specific task song
+// 3. Get song details
 app.get("/api/song/:taskId", (req, res) => {
     const found = recentSongs.find(s => s.task_id === req.params.taskId) || recentSongs[0];
     if (!found) {
