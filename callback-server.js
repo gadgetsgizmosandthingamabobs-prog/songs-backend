@@ -5,7 +5,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// In-memory storage for the latest song and revisions (or connect to your database)
+// In-memory storage for song details and contact messages
 let latestSong = {
   title: "Custom Master Track",
   audio_url: "https://cdn.systeme.io/your-default-audio.mp3",
@@ -13,6 +13,9 @@ let latestSong = {
   recipient: "Loved One",
   name: "Valued Customer"
 };
+
+// Array to store contact submissions
+let contactMessages = [];
 
 // Endpoint to get the latest song details
 app.get('/api/song/latest', (req, res) => {
@@ -22,32 +25,33 @@ app.get('/api/song/latest', (req, res) => {
 // Endpoint to handle song revision requests
 app.post('/api/revision', async (req, res) => {
   const { recipient, name, notes, songTitle } = req.body;
-  
   console.log(`Revision requested for "${songTitle}" (Recipient: ${name} / ${recipient})`);
   console.log(`Notes / Changes requested: ${notes}`);
-
-  // Here you can add your automated trigger (like calling Suno/MusicAPI or notifying Make.com)
-
-  res.status(200).json({ 
-    success: true, 
-    message: 'Revision request received and queued for production.' 
-  });
+  res.status(200).json({ success: true, message: 'Revision request received.' });
 });
 
 // Endpoint to handle contact form submissions
 app.post('/api/contact', async (req, res) => {
   const { name, email, message } = req.body;
   
-  console.log(`New Contact Message Received:`);
-  console.log(`- Name: ${name}`);
-  console.log(`- Email: ${email}`);
-  console.log(`- Message: ${message}`);
+  const newMessage = {
+    id: Date.now(),
+    name: name || 'Anonymous',
+    email: email || 'No email provided',
+    message: message || 'No message content',
+    date: new Date().toLocaleString()
+  };
 
-  // This logs the submission directly in your Render server logs.
-  res.status(200).json({ 
-    success: true, 
-    message: 'Message received successfully!' 
-  });
+  // Save to the beginning of the array so newest messages show first
+  contactMessages.unshift(newMessage);
+  
+  console.log(`New message saved from ${newMessage.name} (${newMessage.email})`);
+  res.status(200).json({ success: true, message: 'Message saved successfully!' });
+});
+
+// Endpoint for your admin dashboard to fetch all messages
+app.get('/api/admin/messages', (req, res) => {
+  res.json(contactMessages);
 });
 
 const PORT = process.env.PORT || 3000;
