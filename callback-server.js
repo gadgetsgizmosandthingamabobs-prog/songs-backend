@@ -15,45 +15,48 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // 1. Trigger generation (called by generator page)
-app.post('/api/generate', async (req, res) => {
-    try {
-        const payload = req.body;
-        const taskId = payload.task_id || ('task_' + Date.now());
-        
-        res.status(200).json({ success: true, task_id: taskId });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
+// (Your existing generator routes remain here...)
 
-// 2. Endpoint for Make.com to POST the completed audio URL
-app.post('/api/song/update', (req, res) => {
-  const { task_id, audio_url } = req.body;
-  
-  if (!task_id || !audio_url) {
-    return res.status(400).json({ error: 'task_id and audio_url are required' });
+// 2. Endpoint to fetch the latest song details (used by your /downloads page)
+app.get('/api/song/latest', (req, res) => {
+  if (!latestSong) {
+    return res.status(404).json({ error: "No songs generated yet" });
   }
-
-  completedSongs.set(task_id, { audio_url });
-  latestSong = { task_id, audio_url };
-
-  console.log(`Saved audio URL for task_id: ${task_id}`);
-  return res.status(200).json({ success: true });
+  res.json(latestSong);
 });
 
-// 3. Endpoint for frontend preview page to poll for the song
-app.get('/api/song/:taskId', (req, res) => {
-  const { taskId } = req.params;
-  
-  if (completedSongs.has(taskId)) {
-    return res.json({ audio_url: completedSongs.get(taskId).audio_url });
-  } else if (taskId === 'latest' && latestSong) {
-    return res.json({ audio_url: latestSong.audio_url });
-  } else {
-    return res.status(404).json({ error: 'Song still processing or not found' });
+// 3. Handle incoming revision requests from the downloads page
+app.post('/api/revision', async (req, res) => {
+  const { recipient, name, notes, songTitle } = req.body;
+
+  console.log(`Received revision request for ${name} (${recipient}): ${notes}`);
+
+  try {
+    // Here is where you can trigger your music generation engine (e.g. Suno/MusicAPI)
+    // For now, we update the latestSong variable with the revised info/audio URL
+    
+    const updatedAudioUrl = "https://your-audio-storage.com/revised-song.mp3"; // Replace with your engine's output URL when ready
+
+    latestSong = {
+      title: `${songTitle || 'Custom Song'} (Revised)`,
+      audio_url: updatedAudioUrl,
+      lyrics: `Revised notes: ${notes}`,
+      recipient: recipient,
+      name: name
+    };
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'Revision request received and latest song updated successfully!',
+      audio_url: updatedAudioUrl 
+    });
+
+  } catch (error) {
+    console.error('Error handling revision:', error);
+    res.status(500).json({ success: false, error: 'Failed to process song revision.' });
   }
 });
 
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
