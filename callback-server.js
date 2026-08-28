@@ -12,45 +12,55 @@ app.use(cors({
 
 app.use(express.json());
 
+// In-memory storage for active tasks and latest song
 let latestSong = {
   title: "Custom Master Track",
-  audio_url: "https://cdn.systeme.io/your-default-audio.mp3",
+  audio_url: "",
   lyrics: "Default lyrics placeholder",
   recipient: "Loved One",
   name: "Valued Customer"
 };
 
-let contactMessages = [];
+let taskStore = {};
 
-app.get('/api/song/latest', (req, res) => {
-  res.json(latestSong);
-});
-
-app.post('/api/revision', async (req, res) => {
-  const { recipient, name, notes, songTitle } = req.body;
-  console.log(`Revision requested for "${songTitle}" (${name} / ${recipient}): ${notes}`);
-  res.status(200).json({ success: true, message: 'Revision request received.' });
-});
-
-app.post('/api/contact', async (req, res) => {
-  const { name, email, message } = req.body;
-  const newMessage = {
-    id: Date.now(),
-    name: name || 'Anonymous',
-    email: email || 'No email provided',
-    message: message || 'No message content',
-    date: new Date().toLocaleString()
+// Endpoint for Make.com to update when song generation finishes
+app.post('/api/song/update', (req, res) => {
+  const { task_id, audio_url, title, recipient, name, lyrics } = req.body;
+  
+  const songData = {
+    title: title || "Custom Master Track",
+    audio_url: audio_url || "",
+    lyrics: lyrics || "",
+    recipient: recipient || "Loved One",
+    name: name || "Valued Customer"
   };
-  contactMessages.unshift(newMessage);
-  console.log(`New message saved from ${newMessage.name}`);
-  res.status(200).json({ success: true, message: 'Message saved successfully!' });
+
+  if (task_id) {
+    taskStore[task_id] = songData;
+  }
+  latestSong = songData;
+
+  res.status(200).json({ success: true, message: "Song updated successfully" });
 });
 
-app.get('/api/admin/messages', (req, res) => {
-  res.json(contactMessages);
+// Endpoint to check status by specific task_id
+app.get('/api/song/status', (req, res) => {
+  const taskId = req.query.task_id;
+  if (taskId && taskStore[taskId]) {
+    return res.status(200).json(taskStore[taskId]);
+  }
+  if (latestSong.audio_url) {
+    return res.status(200).json(latestSong);
+  }
+  res.status(404).json({ error: "Song not found or still processing" });
+});
+
+// Fallback endpoint for latest song
+app.get('/api/song/latest', (req, res) => {
+  res.status(200).json(latestSong);
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server is running and listening on port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
 });
