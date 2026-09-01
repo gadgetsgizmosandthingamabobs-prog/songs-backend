@@ -40,6 +40,13 @@ app.post('/api/song/update', (req, res) => {
   res.status(200).json({ success: true, message: "Song updated successfully" });
 });
 
+// Get song data by specific task ID (supports frontend preview lookups)
+app.get('/api/song/:task_id', (req, res) => {
+    const { task_id } = req.params;
+    const song = taskStore[task_id] || latestSong;
+    res.status(200).json(song);
+});
+
 // Fallback status/latest song endpoint
 app.get('/api/song/latest', (req, res) => {
     res.status(200).json(latestSong);
