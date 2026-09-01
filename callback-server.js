@@ -16,7 +16,7 @@ app.use(express.json());
 let latestSong = {
     title: "Custom Master Track",
     audio_url: "",
-    lyrics: "Default lyrics placeholder",
+    lyrics: "Please do not leave or refresh this page while your song is being generated. Default lyrics placeholder",
     recipient: "Loved One",
     name: "Valued Customer"
 };
@@ -29,7 +29,7 @@ app.post('/api/song/update', (req, res) => {
   const songData = {
     title: title || "Custom Master Track",
     audio_url: audio_url || "",
-    lyrics: lyrics || "",
+    lyrics: lyrics ? `Please do not leave or refresh this page while your song is being generated. ${lyrics}` : "Please do not leave or refresh this page while your song is being generated.",
     recipient: recipient || "Loved One",
     name: name || "Valued Customer"
   };
