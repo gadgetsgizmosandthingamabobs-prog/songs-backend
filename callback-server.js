@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import axios from 'axios';
 
 const app = express();
 
@@ -24,7 +23,7 @@ let latestSong = {
 
 const tasks = {};
 
-// Helper: Formats strict style tags putting lead vocal constraints FIRST
+// Enforces lead vocal constraints FIRST in style string
 function buildStrictStyleTags(vocalChoice, genreChoice) {
   let vocalTag = "";
   const vocal = (vocalChoice || "").toLowerCase();
@@ -36,7 +35,7 @@ function buildStrictStyleTags(vocalChoice, genreChoice) {
   } else if (vocal.includes('duet')) {
     vocalTag = "duet, male and female vocals, vocal harmony";
   } else {
-    vocalTag = "female vocals, clear lead female voice"; // Default fallback
+    vocalTag = "female vocals, clear lead female voice";
   }
 
   let genreTag = "";
@@ -55,7 +54,7 @@ function buildStrictStyleTags(vocalChoice, genreChoice) {
   return `${vocalTag}, ${genreTag}`;
 }
 
-// Handler for incoming generation requests from form
+// Processing endpoint
 app.post('/api/generate-song', async (req, res) => {
   try {
     const { 
@@ -78,13 +77,11 @@ app.post('/api/generate-song', async (req, res) => {
     const chosenTitle = songTitle || title || "Song for " + (name || "Loved One");
     const currentTaskId = task_id || `task_${Date.now()}`;
 
-    // Enforce strict vocal tag priority
     const strictStyleTags = buildStrictStyleTags(chosenVocal, chosenGenre);
 
     console.log(`[LOG] Starting Generation Task: ${currentTaskId}`);
     console.log(`[LOG] Style Payload: "${strictStyleTags}"`);
 
-    // Initialize track state
     latestSong = {
       title: chosenTitle,
       audio_url: "",
@@ -98,33 +95,33 @@ app.post('/api/generate-song', async (req, res) => {
 
     tasks[currentTaskId] = { ...latestSong, status: "processing" };
 
-    // =========================================================================
-    // TRIGGER MUSIC GENERATION API
-    // =========================================================================
-    const SUNO_API_URL = process.env.SUNO_API_URL || 'https://api.suno.ai/v1/generate';
-    const SUNO_API_KEY = process.env.SUNO_API_KEY || '';
+    const SUNO_API_URL = process.env.SUNO_API_URL;
+    const SUNO_API_KEY = process.env.SUNO_API_KEY;
 
-    if (SUNO_API_KEY || process.env.SUNO_API_URL) {
-      const apiResponse = await axios.post(SUNO_API_URL, {
-        prompt: chosenLyrics,
-        style: strictStyleTags,
-        title: chosenTitle,
-        customMode: true,
-        instrumental: false,
-        callBackUrl: `https://${req.get('host')}/callback`
-      }, {
+    // Trigger API call using native fetch if environment variables are set
+    if (SUNO_API_URL) {
+      const response = await fetch(SUNO_API_URL, {
+        method: 'POST',
         headers: {
-          'Authorization': `Bearer ${SUNO_API_KEY}`,
+          'Authorization': `Bearer ${SUNO_API_KEY || ''}`,
           'Content-Type': 'application/json'
-        }
+        },
+        body: JSON.stringify({
+          prompt: chosenLyrics,
+          style: strictStyleTags,
+          title: chosenTitle,
+          customMode: true,
+          instrumental: false,
+          callBackUrl: `https://${req.get('host')}/callback`
+        })
       });
 
-      console.log(`[LOG] Music API accepted request for ${currentTaskId}`);
+      const apiData = await response.json();
+      console.log(`[LOG] Music API Response for ${currentTaskId}:`, apiData);
 
-      // If API returns audio directly
-      if (apiResponse.data && apiResponse.data.audio_url) {
-        latestSong.audio_url = apiResponse.data.audio_url;
-        tasks[currentTaskId].audio_url = apiResponse.data.audio_url;
+      if (apiData && apiData.audio_url) {
+        latestSong.audio_url = apiData.audio_url;
+        tasks[currentTaskId].audio_url = apiData.audio_url;
         tasks[currentTaskId].status = "completed";
       }
     }
@@ -137,16 +134,12 @@ app.post('/api/generate-song', async (req, res) => {
     });
 
   } catch (error) {
-    console.error("[ERROR] API Generation request failed:", error.response?.data || error.message);
-    return res.status(500).json({ 
-      success: false, 
-      error: "Failed to communicate with music engine", 
-      details: error.response?.data || error.message 
-    });
+    console.error("[ERROR] Generation failed:", error.message);
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Incoming Webhook / Callback Handler
+// Webhook Callback handler
 app.post('/callback', (req, res) => {
   const { task_id, audio_url, status, data } = req.body;
   const targetUrl = audio_url || (data && data.audio_url);
@@ -158,13 +151,13 @@ app.post('/callback', (req, res) => {
       tasks[targetTaskId].audio_url = targetUrl;
       tasks[targetTaskId].status = status || "completed";
     }
-    console.log(`[LOG] Callback received. Audio URL updated for ${targetTaskId}: ${targetUrl}`);
+    console.log(`[LOG] Callback updated audio URL for ${targetTaskId}: ${targetUrl}`);
   }
   
   res.status(200).json({ received: true });
 });
 
-// Polling endpoint for frontend preview page
+// Polling endpoint for frontend preview
 app.get('/preview-results', (req, res) => {
   const taskId = req.query.task_id;
   
