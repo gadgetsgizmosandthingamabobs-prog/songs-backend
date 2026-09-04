@@ -3,7 +3,6 @@ import cors from 'cors';
 
 const app = express();
 
-// Enable CORS for all incoming requests from your funnels
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'OPTIONS'],
@@ -12,101 +11,137 @@ app.use(cors({
 
 app.use(express.json());
 
-// In-memory storage for active tasks and latest song
+// In-memory store for generated tracks and task tracking
 let latestSong = {
   title: "Custom Master Track",
   audio_url: "",
-  lyrics: "Please do not leave or refresh this page while your song is being generated. Default lyrics placeholder",
+  lyrics: "Please do not leave or refresh this page while your song is being generated.",
   recipient: "Loved One",
   name: "Valued Customer",
-  genre: "Love Ballad",
+  genre: "Country",
   vocal: "Female"
 };
 
-// Map incoming vocal & genre options into strict music model tags
-function generateStyleTags(vocalChoice, genreChoice) {
+const tasks = {};
+
+// Helper: Formats strict style tags putting lead vocal constraints FIRST
+function buildStrictStyleTags(vocalChoice, genreChoice) {
   let vocalTag = "";
-  if (vocalChoice?.toLowerCase() === 'female') {
+  const vocal = (vocalChoice || "").toLowerCase();
+
+  if (vocal.includes('female')) {
     vocalTag = "female vocals, clear lead female voice, soft female singer";
-  } else if (vocalChoice?.toLowerCase() === 'male') {
+  } else if (vocal.includes('male')) {
     vocalTag = "male vocals, clear lead male voice, warm male singer";
-  } else if (vocalChoice?.toLowerCase() === 'duet') {
-    vocalTag = "duet, male and female vocals, alternating lead singers, vocal harmony";
+  } else if (vocal.includes('duet')) {
+    vocalTag = "duet, male and female vocals, vocal harmony";
   } else {
-    vocalTag = "female vocals, clear lead female voice"; // Default safety fallback
+    vocalTag = "female vocals, clear lead female voice"; // Default fallback
   }
 
   let genreTag = "";
-  if (genreChoice?.toLowerCase().includes('ballad')) {
-    genreTag = "emotional love ballad, acoustic piano, romantic strings, soft melody, 75bpm";
-  } else if (genreChoice?.toLowerCase().includes('pop')) {
-    genreTag = "acoustic pop, strummed acoustic guitar, warm bassline, uplifting rhythm";
+  const genre = (genreChoice || "").toLowerCase();
+
+  if (genre.includes('country')) {
+    genreTag = "country ballad, acoustic guitar, gentle steel guitar, warm melody";
+  } else if (genre.includes('pop')) {
+    genreTag = "acoustic pop, strummed acoustic guitar, warm baseline";
+  } else if (genre.includes('ballad') || genre.includes('love')) {
+    genreTag = "emotional love ballad, acoustic piano, romantic strings, 75bpm";
   } else {
-    genreTag = "heartfelt love ballad, piano arrangement, gentle strings";
+    genreTag = `${genreChoice || "acoustic love ballad"}, heartfelt rhythm`;
   }
 
-  // VOCAL TAGS MUST BE PLACED FIRST
   return `${vocalTag}, ${genreTag}`;
 }
 
-// Endpoint to trigger music generation
+// Handler for incoming webhooks / generation requests
 app.post('/api/generate-song', async (req, res) => {
   try {
     const { 
+      task_id,
       userVocalChoice, 
       userGenreChoice, 
+      vocal,
+      genre,
       userLyrics, 
+      lyrics,
       songTitle,
+      title,
       recipient,
-      name
+      name,
+      audio_url,
+      audioUrl
     } = req.body;
 
-    const strictStyleTags = generateStyleTags(userVocalChoice, userGenreChoice);
+    const chosenVocal = userVocalChoice || vocal || "Female";
+    const chosenGenre = userGenreChoice || genre || "Country";
+    const chosenLyrics = userLyrics || lyrics || latestSong.lyrics;
+    const chosenTitle = songTitle || title || "Custom Master Track";
+    const finalAudioUrl = audio_url || audioUrl || "";
 
-    console.log(`[LOG] Generating song: "${songTitle}"`);
-    console.log(`[LOG] Formatted Style Tags Payload: "${strictStyleTags}"`);
+    // Generate style string prioritizing vocal tags
+    const strictStyleTags = buildStrictStyleTags(chosenVocal, chosenGenre);
 
-    // Update in-memory track state
+    console.log(`[LOG] Processing generation task: ${task_id || 'direct'}`);
+    console.log(`[LOG] Applied Style Payload: "${strictStyleTags}"`);
+
+    // Update global preview state
     latestSong = {
-      title: songTitle || "Custom Master Track",
-      audio_url: "", // Will be populated when webhook completes
-      lyrics: userLyrics || latestSong.lyrics,
+      title: chosenTitle,
+      audio_url: finalAudioUrl,
+      lyrics: chosenLyrics,
       recipient: recipient || latestSong.recipient,
       name: name || latestSong.name,
-      genre: userGenreChoice || "Love Ballad",
-      vocal: userVocalChoice || "Female"
+      genre: chosenGenre,
+      vocal: chosenVocal,
+      styleTags: strictStyleTags
     };
 
-    // Construct payload for external generation API
-    const apiPayload = {
-      customMode: true,
-      instrumental: false,
-      prompt: userLyrics,
-      style: strictStyleTags,
-      title: songTitle || "Custom Master Track"
-    };
+    if (task_id) {
+      tasks[task_id] = { ...latestSong, status: finalAudioUrl ? "completed" : "processing" };
+    }
 
-    // Forward apiPayload to your music API endpoint here if making an external fetch/axios request
-    
     return res.status(200).json({
       success: true,
-      message: "Song generation initiated",
+      task_id: task_id || "task_active",
       styleTagsUsed: strictStyleTags,
-      songData: latestSong
+      data: latestSong
     });
 
   } catch (error) {
-    console.error("[ERROR] Song generation failed:", error);
+    console.error("[ERROR] Endpoint failure:", error);
     return res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Endpoint to fetch preview result
+// Incoming Callback / Webhook updates from Music API
+app.post('/callback', (req, res) => {
+  const { task_id, audio_url, status } = req.body;
+  
+  if (audio_url) {
+    latestSong.audio_url = audio_url;
+    if (task_id && tasks[task_id]) {
+      tasks[task_id].audio_url = audio_url;
+      tasks[task_id].status = status || "completed";
+    }
+    console.log(`[LOG] Audio URL updated for task ${task_id}: ${audio_url}`);
+  }
+  
+  res.status(200).json({ received: true });
+});
+
+// Preview endpoint polled by songsfromyourheart.com/preview-results
 app.get('/preview-results', (req, res) => {
+  const taskId = req.query.task_id;
+  
+  if (taskId && tasks[taskId]) {
+    return res.json(tasks[taskId]);
+  }
+  
   res.json(latestSong);
 });
 
-// Port configuration for Render
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Callback server listening on port ${PORT}`);
