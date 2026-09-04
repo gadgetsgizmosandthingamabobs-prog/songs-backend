@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import axios from 'axios';
 
 const app = express();
 
@@ -11,7 +12,6 @@ app.use(cors({
 
 app.use(express.json());
 
-// In-memory store for generated tracks and task tracking
 let latestSong = {
   title: "Custom Master Track",
   audio_url: "",
@@ -55,7 +55,7 @@ function buildStrictStyleTags(vocalChoice, genreChoice) {
   return `${vocalTag}, ${genreTag}`;
 }
 
-// Handler for incoming webhooks / generation requests
+// Handler for incoming generation requests from form
 app.post('/api/generate-song', async (req, res) => {
   try {
     const { 
@@ -69,69 +69,102 @@ app.post('/api/generate-song', async (req, res) => {
       songTitle,
       title,
       recipient,
-      name,
-      audio_url,
-      audioUrl
+      name
     } = req.body;
 
     const chosenVocal = userVocalChoice || vocal || "Female";
     const chosenGenre = userGenreChoice || genre || "Country";
-    const chosenLyrics = userLyrics || lyrics || latestSong.lyrics;
-    const chosenTitle = songTitle || title || "Custom Master Track";
-    const finalAudioUrl = audio_url || audioUrl || "";
+    const chosenLyrics = userLyrics || lyrics || "Heartfelt custom song lyrics";
+    const chosenTitle = songTitle || title || "Song for " + (name || "Loved One");
+    const currentTaskId = task_id || `task_${Date.now()}`;
 
-    // Generate style string prioritizing vocal tags
+    // Enforce strict vocal tag priority
     const strictStyleTags = buildStrictStyleTags(chosenVocal, chosenGenre);
 
-    console.log(`[LOG] Processing generation task: ${task_id || 'direct'}`);
-    console.log(`[LOG] Applied Style Payload: "${strictStyleTags}"`);
+    console.log(`[LOG] Starting Generation Task: ${currentTaskId}`);
+    console.log(`[LOG] Style Payload: "${strictStyleTags}"`);
 
-    // Update global preview state
+    // Initialize track state
     latestSong = {
       title: chosenTitle,
-      audio_url: finalAudioUrl,
+      audio_url: "",
       lyrics: chosenLyrics,
-      recipient: recipient || latestSong.recipient,
-      name: name || latestSong.name,
+      recipient: recipient || "Loved One",
+      name: name || "Valued Customer",
       genre: chosenGenre,
       vocal: chosenVocal,
       styleTags: strictStyleTags
     };
 
-    if (task_id) {
-      tasks[task_id] = { ...latestSong, status: finalAudioUrl ? "completed" : "processing" };
+    tasks[currentTaskId] = { ...latestSong, status: "processing" };
+
+    // =========================================================================
+    // TRIGGER MUSIC GENERATION API
+    // =========================================================================
+    const SUNO_API_URL = process.env.SUNO_API_URL || 'https://api.suno.ai/v1/generate';
+    const SUNO_API_KEY = process.env.SUNO_API_KEY || '';
+
+    if (SUNO_API_KEY || process.env.SUNO_API_URL) {
+      const apiResponse = await axios.post(SUNO_API_URL, {
+        prompt: chosenLyrics,
+        style: strictStyleTags,
+        title: chosenTitle,
+        customMode: true,
+        instrumental: false,
+        callBackUrl: `https://${req.get('host')}/callback`
+      }, {
+        headers: {
+          'Authorization': `Bearer ${SUNO_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log(`[LOG] Music API accepted request for ${currentTaskId}`);
+
+      // If API returns audio directly
+      if (apiResponse.data && apiResponse.data.audio_url) {
+        latestSong.audio_url = apiResponse.data.audio_url;
+        tasks[currentTaskId].audio_url = apiResponse.data.audio_url;
+        tasks[currentTaskId].status = "completed";
+      }
     }
 
     return res.status(200).json({
       success: true,
-      task_id: task_id || "task_active",
+      task_id: currentTaskId,
       styleTagsUsed: strictStyleTags,
-      data: latestSong
+      data: tasks[currentTaskId]
     });
 
   } catch (error) {
-    console.error("[ERROR] Endpoint failure:", error);
-    return res.status(500).json({ success: false, error: error.message });
+    console.error("[ERROR] API Generation request failed:", error.response?.data || error.message);
+    return res.status(500).json({ 
+      success: false, 
+      error: "Failed to communicate with music engine", 
+      details: error.response?.data || error.message 
+    });
   }
 });
 
-// Incoming Callback / Webhook updates from Music API
+// Incoming Webhook / Callback Handler
 app.post('/callback', (req, res) => {
-  const { task_id, audio_url, status } = req.body;
-  
-  if (audio_url) {
-    latestSong.audio_url = audio_url;
-    if (task_id && tasks[task_id]) {
-      tasks[task_id].audio_url = audio_url;
-      tasks[task_id].status = status || "completed";
+  const { task_id, audio_url, status, data } = req.body;
+  const targetUrl = audio_url || (data && data.audio_url);
+  const targetTaskId = task_id || (data && data.task_id);
+
+  if (targetUrl) {
+    latestSong.audio_url = targetUrl;
+    if (targetTaskId && tasks[targetTaskId]) {
+      tasks[targetTaskId].audio_url = targetUrl;
+      tasks[targetTaskId].status = status || "completed";
     }
-    console.log(`[LOG] Audio URL updated for task ${task_id}: ${audio_url}`);
+    console.log(`[LOG] Callback received. Audio URL updated for ${targetTaskId}: ${targetUrl}`);
   }
   
   res.status(200).json({ received: true });
 });
 
-// Preview endpoint polled by songsfromyourheart.com/preview-results
+// Polling endpoint for frontend preview page
 app.get('/preview-results', (req, res) => {
   const taskId = req.query.task_id;
   
