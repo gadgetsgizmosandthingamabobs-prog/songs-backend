@@ -12,32 +12,37 @@ app.use(cors({
 
 app.use(express.json());
 
-// In-memory storage for active tasks and latest song
-let latestSong = {
-  title: "Custom Master Track",
-  audio_url: "",
-  lyrics: "Please do not leave or refresh this page while your song is being generated.",
-  recipient: "Loved One",
-  name: "Valued Customer",
-  genre: "Love Ballad",
-  vocal: "Male and Female Duet"
-};
+// In-memory array database to archive all customer songs for support
+let songsDatabase = [];
 
+// Save incoming completed song from Make.com
 app.post('/api/song/save', express.json(), (req, res) => {
-  latestSong = {
-    title: req.body.title || latestSong.title,
-    audio_url: req.body.audio_url || latestSong.audio_url,
-    lyrics: req.body.lyrics || latestSong.lyrics,
-    recipient: req.body.recipient || latestSong.recipient,
-    name: req.body.name || latestSong.name,
-    genre: req.body.genre || latestSong.genre,
-    vocal: req.body.vocal || latestSong.vocal,
+  const newSong = {
+    id: 'song_' + Date.now(),
+    title: req.body.title || 'Custom Master Track',
+    audio_url: req.body.audio_url || '',
+    lyrics: req.body.lyrics || 'No lyrics available.',
+    recipient: req.body.recipient || 'Loved One',
+    name: req.body.name || 'Valued Customer',
+    genre: req.body.genre || 'Love Ballad',
+    vocal: req.body.vocal || 'Male and Female Duet',
+    timestamp: new Date().toISOString()
   };
-  res.status(200).json({ success: true, latestSong });
+  
+  // Add to the front of the array so latest is always index 0
+  songsDatabase.unshift(newSong);
+  
+  res.status(200).json({ success: true, totalSaved: songsDatabase.length, song: newSong });
 });
 
+// Endpoint to get the latest single song (for customer success page)
 app.get('/api/song/latest', (req, res) => {
-  res.json(latestSong);
+  res.json(songsDatabase[0] || { title: "No songs yet", audio_url: "", lyrics: "" });
+});
+
+// Endpoint to get ALL customer songs for the Admin Support page
+app.get('/api/songs/all', (req, res) => {
+  res.json(songsDatabase);
 });
 
 const PORT = process.env.PORT || 3000;
