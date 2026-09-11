@@ -1,19 +1,31 @@
-try {
-  const response = await fetch('https://songs-backend-kbfk.onrender.com/api/songs/all');
-  if (response.ok) {
-    const songs = await response.json();
-    if (songs && songs.length > 0) {
-      const matchedSong = songs.find(s => s.recipient && s.recipient.toLowerCase() === recipient.toLowerCase()) || songs[0];
-      songDetails.audio_url = matchedSong.audio_url || '';
-      if (matchedSong.title) songDetails.title = matchedSong.title;
-      // Explicitly check all potential lyric keys coming from the backend/Make.com
-      if (matchedSong.lyrics) {
-        songDetails.lyrics = matchedSong.lyrics;
-      } else if (matchedSong.prompt) {
-        songDetails.lyrics = matchedSong.prompt;
-      }
-    }
-  }
-} catch (err) {
-  console.error('Could not fetch song archives:', err);
-}
+// In your Express backend (callback-server.js)
+let savedSongs = []; // Or your database connection
+
+app.post('/api/song/create', (express.json()), (req, res) => {
+  const { title, audio_url, url, audio, lyrics, prompt, recipient, name } = req.body;
+  
+  const newSong = {
+    id: 'song_' + Date.now(),
+    title: title || `Song for ${name || 'Customer'} (${recipient || 'Loved One'})`,
+    audio_url: audio_url || url || audio || '',
+    lyrics: lyrics || prompt || 'No lyrics available.',
+    recipient: recipient || 'Loved One',
+    name: name || 'Customer',
+    timestamp: new Date().toISOString()
+  };
+
+  savedSongs.unshift(newSong); // Keep latest at the top
+  res.status(200).json({ success: true, song: newSong });
+});
+
+app.get('/api/songs/all', (req, res) => {
+  res.status(200).json(savedSongs);
+});
+
+// Endpoint to handle revision submissions
+app.post('/api/revision', express.json(), (req, res) => {
+  const { recipient, name, notes, songTitle } = req.body;
+  console.log(`Revision requested for "${songTitle}" (${name} / ${recipient}): ${notes}`);
+  // Add your webhook/trigger logic to Make.com or your AI music generator here
+  res.status(200).json({ success: true, message: 'Revision request received and processing.' });
+});
