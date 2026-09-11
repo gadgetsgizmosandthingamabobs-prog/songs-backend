@@ -1,22 +1,19 @@
-// Store customer song versions/revisions
-let songRevisionsDB = {};
-
-// Save revision request & generate updated entry
-app.post('/api/revision', express.json(), (req, res) => {
-  const { recipient, name, notes, songTitle } = req.body;
-  
-  const revisedSong = {
-    id: 'rev_' + Date.now(),
-    title: `${songTitle || 'Custom Song'} (Revision)`,
-    audio_url: songsDatabase[0] ? songsDatabase[0].audio_url : '', // Links latest generated asset or updated render
-    lyrics: `Revision Notes: ${notes}\n\n-- ORIGINAL LYRICS --\n` + (songsDatabase[0] ? songsDatabase[0].lyrics : ''),
-    recipient: recipient || 'Loved One',
-    name: name || 'Customer',
-    timestamp: new Date().toISOString()
-  };
-
-  // Archive in database
-  songsDatabase.unshift(revisedSong);
-
-  res.status(200).json({ success: true, message: 'Revision processed successfully', song: revisedSong });
-});
+try {
+  const response = await fetch('https://songs-backend-kbfk.onrender.com/api/songs/all');
+  if (response.ok) {
+    const songs = await response.json();
+    if (songs && songs.length > 0) {
+      const matchedSong = songs.find(s => s.recipient && s.recipient.toLowerCase() === recipient.toLowerCase()) || songs[0];
+      songDetails.audio_url = matchedSong.audio_url || '';
+      if (matchedSong.title) songDetails.title = matchedSong.title;
+      // Explicitly check all potential lyric keys coming from the backend/Make.com
+      if (matchedSong.lyrics) {
+        songDetails.lyrics = matchedSong.lyrics;
+      } else if (matchedSong.prompt) {
+        songDetails.lyrics = matchedSong.prompt;
+      }
+    }
+  }
+} catch (err) {
+  console.error('Could not fetch song archives:', err);
+}
