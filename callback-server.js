@@ -1,7 +1,13 @@
-// In your Express backend (callback-server.js)
-let savedSongs = []; // Or your database connection
+import express from 'express';
+import cors from 'cors';
 
-app.post('/api/song/create', (express.json()), (req, res) => {
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+let savedSongs = [];
+
+app.post('/api/song/create', (req, res) => {
   const { title, audio_url, url, audio, lyrics, prompt, recipient, name } = req.body;
   
   const newSong = {
@@ -14,7 +20,7 @@ app.post('/api/song/create', (express.json()), (req, res) => {
     timestamp: new Date().toISOString()
   };
 
-  savedSongs.unshift(newSong); // Keep latest at the top
+  savedSongs.unshift(newSong);
   res.status(200).json({ success: true, song: newSong });
 });
 
@@ -22,10 +28,13 @@ app.get('/api/songs/all', (req, res) => {
   res.status(200).json(savedSongs);
 });
 
-// Endpoint to handle revision submissions
-app.post('/api/revision', express.json(), (req, res) => {
+app.post('/api/revision', (req, res) => {
   const { recipient, name, notes, songTitle } = req.body;
   console.log(`Revision requested for "${songTitle}" (${name} / ${recipient}): ${notes}`);
-  // Add your webhook/trigger logic to Make.com or your AI music generator here
   res.status(200).json({ success: true, message: 'Revision request received and processing.' });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
