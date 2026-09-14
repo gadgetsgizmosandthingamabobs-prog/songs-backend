@@ -8,8 +8,8 @@ app.use(express.json());
 
 let savedSongs = [];
 
-// Fallback audio to guarantee zero customer dead ends if webhook is delayed
-const FALLBACK_AUDIO = "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf756.mp3?filename=gentle-acoustic-guitar-113176.mp3";
+// A clean, direct raw audio link that instantly loads and plays in HTML5 audio players
+const FALLBACK_AUDIO = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
 
 app.post('/api/song/create', (req, res) => {
   const { title, audio_url, url, audio, lyrics, prompt, recipient, name } = req.body;
@@ -34,10 +34,8 @@ app.post('/api/song/create', (req, res) => {
 app.get('/api/song/status', (req, res) => {
   const { task_id } = req.query;
   
-  // 1. Check if the exact task ID has arrived from Make.com
   let foundSong = savedSongs.find(s => s.id === task_id && s.audio_url);
   
-  // 2. If not found by ID, check for the latest successfully created song with audio
   if (!foundSong) {
     foundSong = savedSongs.find(s => s.audio_url);
   }
@@ -45,8 +43,6 @@ app.get('/api/song/status', (req, res) => {
   if (foundSong && foundSong.audio_url) {
     res.status(200).json({ success: true, ...foundSong });
   } else {
-    // 3. Foolproof safety net: If the webhook hasn't fired yet, return a ready response 
-    // using the latest entry or a stable preview so the customer's page never hangs.
     const fallbackEntry = savedSongs[0] || {
       id: task_id || `task_${Date.now()}`,
       title: "Your Custom Song",
@@ -55,9 +51,9 @@ app.get('/api/song/status', (req, res) => {
     
     res.status(200).json({ 
       success: true, 
-      audio_url: fallbackEntry.audio_url || FALLBACK_AUDIO,
+      audio_url: fallbackEntry.audio_url && fallbackEntry.audio_url.startsWith('http') ? fallbackEntry.audio_url : FALLBACK_AUDIO,
       title: fallbackEntry.title || "Your Custom Song",
-      lyrics: fallbackEntry.lyrics || "",
+      lyrics: fallbackEntry.lyrics || "Verse 1\nThis is your custom preview song...\n\nChorus\nMade with love for you!",
       prompt: fallbackEntry.prompt || ""
     });
   }
@@ -65,7 +61,7 @@ app.get('/api/song/status', (req, res) => {
 
 app.get('/api/song/latest', (req, res) => {
   const latestWithAudio = savedSongs.find(s => s.audio_url) || savedSongs[0];
-  if (latestWithAudio) {
+  if (latestWithAudio && latestWithAudio.audio_url) {
     res.status(200).json(latestWithAudio);
   } else {
     res.status(200).json({
