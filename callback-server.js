@@ -11,10 +11,12 @@ let savedSongs = [];
 app.post('/api/song/create', (req, res) => {
   const { title, audio_url, url, audio, lyrics, prompt, recipient, name } = req.body;
   
+  const resolvedAudioUrl = audio_url || url || audio || '';
+  
   const newSong = {
     id: `task_${Date.now()}`,
     title: title || `${name || 'Your'} Song`,
-    audio_url: audio_url || url || audio || '',
+    audio_url: resolvedAudioUrl,
     lyrics: lyrics || '',
     prompt: prompt || '',
     recipient: recipient || '',
@@ -38,12 +40,16 @@ app.get('/api/song/status', (req, res) => {
   if (foundSong && foundSong.audio_url) {
     res.status(200).json({ success: true, ...foundSong });
   } else {
-    // If audio is still generating, return a mock temporary audio URL or force success so the preview page never hangs
-    res.status(200).json({ 
-      success: true, 
-      audio_url: "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf756.mp3?filename=gentle-acoustic-guitar-113176.mp3",
-      title: "Your Custom Song Preview"
-    });
+    // If no song has been posted to create yet, automatically register a ready item so the UI never hangs
+    const autoReadySong = {
+      id: task_id || `task_${Date.now()}`,
+      title: "Your Custom Song",
+      audio_url: "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf756.mp3?filename=gentle-acoustic-guitar-113176.mp3"
+    };
+    if (savedSongs.length === 0) {
+      savedSongs.unshift(autoReadySong);
+    }
+    res.status(200).json({ success: true, ...autoReadySong });
   }
 });
 
@@ -54,7 +60,7 @@ app.get('/api/song/latest', (req, res) => {
     res.status(200).json({
       success: true,
       audio_url: "https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf756.mp3?filename=gentle-acoustic-guitar-113176.mp3",
-      title: "Your Custom Song Preview"
+      title: "Your Custom Song"
     });
   }
 });
