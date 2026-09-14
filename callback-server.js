@@ -28,7 +28,13 @@ app.post('/api/song/create', (req, res) => {
 
 app.get('/api/song/status', (req, res) => {
   const { task_id } = req.query;
-  const foundSong = savedSongs.find(s => s.id === task_id) || savedSongs[0];
+  
+  // Look for the exact task ID, or fall back to the latest song if it's still populating
+  let foundSong = savedSongs.find(s => s.id === task_id);
+  
+  if (!foundSong && savedSongs.length > 0) {
+    foundSong = savedSongs[0];
+  }
   
   if (foundSong && foundSong.audio_url) {
     res.status(200).json({ success: true, ...foundSong });
