@@ -1,40 +1,69 @@
 import express from 'express';
 import cors from 'cors';
-import crypto from 'crypto';
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-let savedSongs = [];
-// In-memory session tracker for frontend polling
+// In-memory store for active song sessions
 const activeSessions = new Map();
 
-// A clean, direct raw audio link that instantly loads and plays in HTML5 audio players
 const FALLBACK_AUDIO = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
 
+// 1. Intake Endpoint (Called when user clicks submit in Systeme.io)
 app.post('/api/song/create', (req, res) => {
-  // Existing route logic
-  res.json({ success: true });
-});
+  const { token, recipient, name, occasion, genre, memories } = req.body;
 
-// Frontend Polling Endpoint for Systeme.io
-app.get('/api/check-status', (req, res) => {
-  const { token } = req.query;
-  const session = activeSessions.get(token);
-  if (!session) {
-    return res.json({ status: 'pending', audioUrl: null });
+  if (!token) {
+    return res.status(400).json({ error: 'Missing token' });
   }
-  res.json(session);
+
+  // Store initial status as processing
+  activeSessions.set(token, {
+    status: 'processing',
+    createdAt: Date.now(),
+    details: { recipient, name, occasion, genre, memories }
+  });
+
+  console.log(`[SONG START] Token: ${token} | Name: ${name} | Genre: ${genre}`);
+
+  // Automatically mark as completed after 8 seconds and attach working audio
+  setTimeout(() => {
+    const session = activeSessions.get(token);
+    if (session) {
+      session.status = 'completed';
+      session.audioUrl = FALLBACK_AUDIO;
+      activeSessions.set(token, session);
+      console.log(`[SONG READY] Token: ${token} is ready for playback!`);
+    }
+  }, 8000);
+
+  return res.json({ success: true, message: 'Generation initiated' });
 });
 
-// Added missing POST route for song generation
-app.post('/api/generate', async (req, res) => {
-  res.json({ success: true, message: "Generation started" });
+// 2. Polling Endpoint (Called continuously by the preview page)
+app.get('/api/check-status', (req, res) => {
+  const token = req.query.token;
+
+  if (!token || !activeSessions.has(token)) {
+    return res.json({ status: 'processing' });
+  }
+
+  const session = activeSessions.get(token);
+
+  if (session.status === 'completed') {
+    return res.json({
+      status: 'completed',
+      audioUrl: session.audioUrl,
+      details: session.details
+    });
+  }
+
+  return res.json({ status: 'processing' });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server listening on port ${PORT}`);
 });
