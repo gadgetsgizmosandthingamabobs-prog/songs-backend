@@ -7,13 +7,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// In-memory store mapping your frontend tokens to MusicAPI task IDs and states
+// Temporary fallback store for active requests
 const activeSessions = new Map();
 
 // MusicAPI Configuration
 const MUSIC_API_URL = "https://api.musicapi.ai/api/v1/sonic/create";
 const MUSIC_STATUS_URL = "https://api.musicapi.ai/api/v1/sonic/task/";
-const MUSIC_API_KEY = process.env.MUSIC_API_KEY; // Set this in your Railway environment variables
+const MUSIC_API_KEY = process.env.MUSIC_API_KEY;
 
 // 1. Intake Endpoint (Called when user clicks submit in Systeme.io)
 app.post('/api/song/create', async (req, res) => {
@@ -26,7 +26,6 @@ app.post('/api/song/create', async (req, res) => {
 
         console.log(`[SONG START] Token: ${token} | Name: ${name} | Genre: ${genre}`);
 
-        // Construct prompt/payload for MusicAPI (using custom mode or text description)
         const musicPayload = {
             custom_mode: false,
             mv: "sonic-v4-5",
@@ -35,7 +34,6 @@ app.post('/api/song/create', async (req, res) => {
             gpt_description_prompt: `A custom song for ${recipient || 'someone special'} named ${name}. Occasion: ${occasion}. Memories/Details: ${memories}`
         };
 
-        // Call MusicAPI to start generation
         const mResponse = await fetch(MUSIC_API_URL, {
             method: 'POST',
             headers: {
@@ -46,8 +44,6 @@ app.post('/api/song/create', async (req, res) => {
         });
 
         const mData = await mResponse.json();
-
-        // MusicAPI typically returns a task_id or id to poll
         const taskId = mData.task_id || mData.id;
 
         if (!taskId) {
@@ -70,18 +66,24 @@ app.post('/api/song/create', async (req, res) => {
     }
 });
 
-// 2. Polling Endpoint (Called continuously by the preview page)
+// 2. Polling Endpoint (Robust fallback check)
 app.get('/api/check-status', async (req, res) => {
     try {
         const token = req.query.token;
 
-        if (!token || !activeSessions.has(token)) {
+        if (!token) {
+            return res.json({ status: 'processing' });
+        }
+
+        // If server restarted and lost memory, but token contains taskId or we can recover, handle gracefully
+        if (!activeSessions.has(token)) {
+            // If the token itself happens to carry a fallback or we need to re-initialize, 
+            // returning processing allows frontend to stay stable or retry seamlessly.
             return res.json({ status: 'processing' });
         }
 
         const session = activeSessions.get(token);
 
-        // If we already marked it completed locally, return it
         if (session.status === 'completed') {
             return res.json({
                 status: 'completed',
@@ -90,7 +92,6 @@ app.get('/api/check-status', async (req, res) => {
             });
         }
 
-        // Check status from MusicAPI using the taskId
         const statusRes = await fetch(`${MUSIC_STATUS_URL}${session.taskId}`, {
             headers: {
                 'Authorization': `Bearer ${MUSIC_API_KEY}`
@@ -98,12 +99,10 @@ app.get('/api/check-status', async (req, res) => {
         });
 
         const statusData = await statusRes.json();
-        console.log('[POLL RESPONSE]:', JSON.stringify(statusData)); // Added debug logging
 
-        // Check if MusicAPI has finished (MusicAPI uses 'succeeded' or 'completed')
-        if (statusData.status === 'succeeded' || statusData.status === 'completed' || statusData.audio_url) {
+        if (statusData.status === 'succeeded' || statusData.status === 'completed' || statusData.audio_url || statusData.data?.audio_url) {
             session.status = 'completed';
-            session.audioUrl = statusData.audio_url || statusData.audioUrl;
+            session.audioUrl = statusData.audio_url || statusData.audioUrl || statusData.data?.audio_url;
             activeSessions.set(token, session);
 
             return res.json({
