@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import fetch from 'node-fetch';
 
 const app = express();
 
@@ -49,7 +48,7 @@ app.post('/api/song/create', async (req, res) => {
         if (!taskId) {
             const errorMsg = mData.error || JSON.stringify(mData);
             activeSessions.set(token, { status: 'failed', error: errorMsg });
-            return.status(500).json({ error: errorMsg });
+            return res.status(500).json({ error: errorMsg });
         }
 
         activeSessions.set(token, {
