@@ -7,15 +7,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// In-memory session store
 const activeSessions = new Map();
 
-// MusicAPI Configuration
 const MUSIC_API_URL = "https://api.musicapi.ai/api/v1/sonic/create";
 const MUSIC_STATUS_URL = "https://api.musicapi.ai/api/v1/sonic/task/";
 const MUSIC_API_KEY = process.env.MUSIC_API_KEY;
 
-// 1. Intake Endpoint
 app.post('/api/song/create', async (req, res) => {
     try {
         const { token, recipient, name, occasion, genre, memories } = req.body;
@@ -45,11 +42,14 @@ app.post('/api/song/create', async (req, res) => {
         });
 
         const mData = await mResponse.json();
+        console.log("[MUSIC API CREATE RESPONSE]:", JSON.stringify(mData));
+
         const taskId = mData.task_id || mData.id || mData.data?.task_id;
 
         if (!taskId) {
-            console.error("MusicAPI Error Response:", mData);
-            return res.status(500).json({ error: 'Failed to initiate generation with MusicAPI', details: mData });
+            const errorMsg = mData.error || JSON.stringify(mData);
+            activeSessions.set(token, { status: 'failed', error: errorMsg });
+            return.status(500).json({ error: errorMsg });
         }
 
         activeSessions.set(token, {
@@ -58,15 +58,14 @@ app.post('/api/song/create', async (req, res) => {
             details: { recipient, name, occasion, genre, memories }
         });
 
-        return res.json({ success: true, message: 'Generation initiated with MusicAPI' });
+        return res.json({ success: true, taskId });
 
     } catch (err) {
         console.error("Server error during song creation:", err);
-        return res.status(500).json({ error: 'Internal server error' });
+        return res.status(500).json({ error: err.message });
     }
 });
 
-// 2. Polling Endpoint
 app.get('/api/check-status', async (req, res) => {
     try {
         const token = req.query.token;
@@ -78,17 +77,15 @@ app.get('/api/check-status', async (req, res) => {
         const session = activeSessions.get(token);
 
         if (session.status === 'completed') {
-            return res.json({
-                status: 'completed',
-                audioUrl: session.audioUrl,
-                details: session.details
-            });
+            return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
+        }
+
+        if (session.status === 'failed') {
+            return res.json({ status: 'failed', error: session.error });
         }
 
         const statusRes = await fetch(`${MUSIC_STATUS_URL}${session.taskId}`, {
-            headers: {
-                'Authorization': `Bearer ${MUSIC_API_KEY}`
-            }
+            headers: { 'Authorization': `Bearer ${MUSIC_API_KEY}` }
         });
 
         const statusData = await statusRes.json();
@@ -99,15 +96,12 @@ app.get('/api/check-status', async (req, res) => {
             session.status = 'completed';
             session.audioUrl = audioUrl;
             activeSessions.set(token, session);
-
-            return res.json({
-                status: 'completed',
-                audioUrl: session.audioUrl,
-                details: session.details
-            });
+            return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
         } else if (taskState === 'failed') {
             session.status = 'failed';
-            return res.json({ status: 'failed', error: 'Generation failed upstream' });
+            session.error = statusData.error || 'Generation failed upstream';
+            activeSessions.set(token, session);
+            return res.json({ status: 'failed', error: session.error });
         }
 
         return res.json({ status: 'processing' });
