@@ -22,18 +22,18 @@ app.post('/api/song/create', async (req, res) => {
 
         console.log(`[SONG START] Token: ${token} | Name: ${name} | Genre: ${genre}`);
 
-        // If a session already exists and is completed, don't recreate
         if (activeSessions.has(token) && activeSessions.get(token).status === 'completed') {
             return res.json({ success: true, status: 'completed' });
         }
 
+        // Corrected MusicAPI v5 Payload Structure
         const musicPayload = {
             task_type: "create_music",
-            custom_mode: false,
             mv: "sonic-v5",
+            prompt: `A custom ${genre || 'Pop'} song for a ${recipient || 'loved one'} named ${name}. Occasion: ${occasion}. Details: ${memories}`,
+            tags: genre || "Pop",
             title: `${name}'s ${occasion || 'Special'} Song`,
-            tags: genre || "Pop, melodic",
-            prompt: `A custom song for ${recipient || 'someone special'} named ${name}. Occasion: ${occasion}. Details: ${memories}`
+            instrumental: false
         };
 
         const mResponse = await fetch(MUSIC_API_URL, {
@@ -51,14 +51,8 @@ app.post('/api/song/create', async (req, res) => {
         const taskId = mData.task_id || mData.id || mData.data?.task_id;
 
         if (!taskId) {
-            console.warn("MusicAPI did not return a task_id. Providing fallback demo audio to prevent hanging.");
-            // Fallback to a working audio stream so the user always gets their song immediately
-            activeSessions.set(token, {
-                status: 'completed',
-                audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-                details: { recipient, name, occasion, genre, memories }
-            });
-            return res.json({ success: true, audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" });
+            console.error("MusicAPI Error Details:", mData);
+            return res.status(500).json({ error: 'Failed to obtain task_id from MusicAPI', details: mData });
         }
 
         activeSessions.set(token, {
@@ -71,15 +65,7 @@ app.post('/api/song/create', async (req, res) => {
 
     } catch (err) {
         console.error("Server error during song creation:", err);
-        // Fallback safety net so frontend never hangs
-        const token = req.body?.token;
-        if (token) {
-            activeSessions.set(token, {
-                status: 'completed',
-                audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
-            });
-        }
-        return res.json({ success: true, audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" });
+        return res.status(500).json({ error: err.message });
     }
 });
 
@@ -97,12 +83,8 @@ app.get('/api/check-status', async (req, res) => {
             return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
         }
 
-        if (!session.taskId) {
-            return res.json({ 
-                status: 'completed', 
-                audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-                details: session.details 
-            });
+        if (session.status === 'failed') {
+            return res.json({ status: 'failed', error: session.error });
         }
 
         const statusRes = await fetch(`${MUSIC_STATUS_URL}${session.taskId}`, {
@@ -110,30 +92,28 @@ app.get('/api/check-status', async (req, res) => {
         });
 
         const statusData = await statusRes.json();
+        console.log(`[POLL for ${session.taskId}]:`, JSON.stringify(statusData));
+
         const taskState = statusData.status || statusData.data?.status;
-        const audioUrl = statusData.audio_url || statusData.audioUrl || statusData.data?.audio_url;
+        const audioUrl = statusData.audio_url || statusData.audioUrl || statusData.data?.audio_url || statusData.data?.suno_song_list?.[0]?.audio_url;
 
         if (taskState === 'succeeded' || taskState === 'completed' || audioUrl) {
             session.status = 'completed';
-            session.audioUrl = audioUrl || "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
+            session.audioUrl = audioUrl;
             activeSessions.set(token, session);
             return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
         } else if (taskState === 'failed') {
-            // Fallback on failure so user still gets a song instead of infinite hang
-            session.status = 'completed';
-            session.audioUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
+            session.status = 'failed';
+            session.error = statusData.error || 'Generation failed upstream';
             activeSessions.set(token, session);
-            return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
+            return res.json({ status: 'failed', error: session.error });
         }
 
         return res.json({ status: 'processing' });
 
     } catch (err) {
         console.error("Error checking MusicAPI status:", err);
-        return res.json({ 
-            status: 'completed', 
-            audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" 
-        });
+        return res.json({ status: 'processing' });
     }
 });
 
