@@ -7,7 +7,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Temporary fallback store for active requests
+// In-memory session store
 const activeSessions = new Map();
 
 // MusicAPI Configuration
@@ -15,7 +15,7 @@ const MUSIC_API_URL = "https://api.musicapi.ai/api/v1/sonic/create";
 const MUSIC_STATUS_URL = "https://api.musicapi.ai/api/v1/sonic/task/";
 const MUSIC_API_KEY = process.env.MUSIC_API_KEY;
 
-// 1. Intake Endpoint (Called when user clicks submit in Systeme.io)
+// 1. Intake Endpoint
 app.post('/api/song/create', async (req, res) => {
     try {
         const { token, recipient, name, occasion, genre, memories } = req.body;
@@ -27,8 +27,9 @@ app.post('/api/song/create', async (req, res) => {
         console.log(`[SONG START] Token: ${token} | Name: ${name} | Genre: ${genre}`);
 
         const musicPayload = {
+            task_type: "create_music",
             custom_mode: false,
-            mv: "sonic-v4-5",
+            mv: "sonic-v5",
             title: `${name}'s ${occasion || 'Special'} Song`,
             tags: genre || "Pop, melodic",
             gpt_description_prompt: `A custom song for ${recipient || 'someone special'} named ${name}. Occasion: ${occasion}. Memories/Details: ${memories}`
@@ -44,14 +45,13 @@ app.post('/api/song/create', async (req, res) => {
         });
 
         const mData = await mResponse.json();
-        const taskId = mData.task_id || mData.id;
+        const taskId = mData.task_id || mData.id || mData.data?.task_id;
 
         if (!taskId) {
             console.error("MusicAPI Error Response:", mData);
-            return res.status(500).json({ error: 'Failed to initiate generation with MusicAPI' });
+            return res.status(500).json({ error: 'Failed to initiate generation with MusicAPI', details: mData });
         }
 
-        // Store session mapping
         activeSessions.set(token, {
             taskId: taskId,
             status: 'processing',
@@ -66,19 +66,12 @@ app.post('/api/song/create', async (req, res) => {
     }
 });
 
-// 2. Polling Endpoint (Robust fallback check)
+// 2. Polling Endpoint
 app.get('/api/check-status', async (req, res) => {
     try {
         const token = req.query.token;
 
-        if (!token) {
-            return res.json({ status: 'processing' });
-        }
-
-        // If server restarted and lost memory, but token contains taskId or we can recover, handle gracefully
-        if (!activeSessions.has(token)) {
-            // If the token itself happens to carry a fallback or we need to re-initialize, 
-            // returning processing allows frontend to stay stable or retry seamlessly.
+        if (!token || !activeSessions.has(token)) {
             return res.json({ status: 'processing' });
         }
 
@@ -99,10 +92,12 @@ app.get('/api/check-status', async (req, res) => {
         });
 
         const statusData = await statusRes.json();
+        const taskState = statusData.status || statusData.data?.status;
+        const audioUrl = statusData.audio_url || statusData.audioUrl || statusData.data?.audio_url;
 
-        if (statusData.status === 'succeeded' || statusData.status === 'completed' || statusData.audio_url || statusData.data?.audio_url) {
+        if (taskState === 'succeeded' || taskState === 'completed' || audioUrl) {
             session.status = 'completed';
-            session.audioUrl = statusData.audio_url || statusData.audioUrl || statusData.data?.audio_url;
+            session.audioUrl = audioUrl;
             activeSessions.set(token, session);
 
             return res.json({
@@ -110,9 +105,9 @@ app.get('/api/check-status', async (req, res) => {
                 audioUrl: session.audioUrl,
                 details: session.details
             });
-        } else if (statusData.status === 'failed') {
+        } else if (taskState === 'failed') {
             session.status = 'failed';
-            return res.json({ status: 'failed' });
+            return res.json({ status: 'failed', error: 'Generation failed upstream' });
         }
 
         return res.json({ status: 'processing' });
@@ -123,7 +118,7 @@ app.get('/api/check-status', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
 });
