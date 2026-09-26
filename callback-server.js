@@ -26,14 +26,14 @@ app.post('/api/song/create', async (req, res) => {
             return res.json({ success: true, status: 'completed' });
         }
 
-        // Corrected MusicAPI v5 Payload Structure
+        // Updated with active model version sonic-v5-5 and gpt_description_prompt
         const musicPayload = {
             task_type: "create_music",
-            mv: "sonic-v5",
-            prompt: `A custom ${genre || 'Pop'} song for a ${recipient || 'loved one'} named ${name}. Occasion: ${occasion}. Details: ${memories}`,
-            tags: genre || "Pop",
+            custom_mode: false,
+            mv: "sonic-v5-5",
             title: `${name}'s ${occasion || 'Special'} Song`,
-            instrumental: false
+            tags: genre || "Pop, melodic",
+            gpt_description_prompt: `A custom song for ${recipient || 'someone special'} named ${name}. Occasion: ${occasion}. Details: ${memories}`
         };
 
         const mResponse = await fetch(MUSIC_API_URL, {
@@ -51,8 +51,9 @@ app.post('/api/song/create', async (req, res) => {
         const taskId = mData.task_id || mData.id || mData.data?.task_id;
 
         if (!taskId) {
-            console.error("MusicAPI Error Details:", mData);
-            return res.status(500).json({ error: 'Failed to obtain task_id from MusicAPI', details: mData });
+            const errorMsg = mData.error || JSON.stringify(mData);
+            console.error("MusicAPI task creation failed:", errorMsg);
+            return res.status(500).json({ error: errorMsg });
         }
 
         activeSessions.set(token, {
@@ -92,7 +93,7 @@ app.get('/api/check-status', async (req, res) => {
         });
 
         const statusData = await statusRes.json();
-        console.log(`[POLL for ${session.taskId}]:`, JSON.stringify(statusData));
+        console.log(`[POLL ${session.taskId}]:`, JSON.stringify(statusData));
 
         const taskState = statusData.status || statusData.data?.status;
         const audioUrl = statusData.audio_url || statusData.audioUrl || statusData.data?.audio_url || statusData.data?.suno_song_list?.[0]?.audio_url;
