@@ -10,13 +10,16 @@ const MUSIC_API_URL = "https://api.musicapi.ai/api/v1/sonic/create";
 const MUSIC_STATUS_URL = "https://api.musicapi.ai/api/v1/sonic/task/";
 const MUSIC_API_KEY = process.env.MUSIC_API_KEY;
 
-const FALLBACK_AUDIO = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
-
 app.post('/api/song/create', async (req, res) => {
     try {
         const { token, recipient, name, occasion, genre, memories } = req.body;
         if (!token) {
             return res.status(400).json({ error: 'Missing token' });
+        }
+
+        if (!MUSIC_API_KEY) {
+            console.error("[CRITICAL] MUSIC_API_KEY is not set in environment variables!");
+            return res.status(500).json({ error: 'Server configuration error: Missing API Key' });
         }
 
         console.log(`[SONG CREATE] Token: ${token} | Name: ${name} | Genre: ${genre}`);
@@ -26,11 +29,12 @@ app.post('/api/song/create', async (req, res) => {
         }
 
         const payload = {
+            task_type: "create_music",
             custom_mode: false,
             mv: "sonic-v4-5",
             title: `${name}'s ${occasion || 'Special'} Song`,
             tags: genre || "Pop, melodic",
-            gpt_description_prompt: `A custom song for ${recipient || 'someone special'} named ${name}. Occasion: ${occasion}. Details: ${memories}`
+            prompt: `A custom song for ${recipient || 'someone special'} named ${name}. Occasion: ${occasion}. Details: ${memories}`
         };
 
         const response = await fetch(MUSIC_API_URL, {
@@ -47,8 +51,13 @@ app.post('/api/song/create', async (req, res) => {
 
         const taskId = data.task_id || data.id || data.data?.task_id || data.data?.id;
 
+        if (!taskId) {
+            console.error("[MUSIC API ERROR] Failed to retrieve task ID:", data);
+            return res.status(500).json({ error: 'Failed to start music generation with MusicAPI', details: data });
+        }
+
         activeSessions.set(token, {
-            taskId: taskId || null,
+            taskId: taskId,
             status: 'processing',
             details: { recipient, name, occasion, genre, memories },
             createdAt: Date.now()
@@ -69,19 +78,11 @@ app.get('/api/check-status', async (req, res) => {
         }
 
         let session = activeSessions.get(token);
-        if (!session) {
+        if (!session || !session.taskId) {
             return res.json({ status: 'processing' });
         }
 
         if (session.status === 'completed') {
-            return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
-        }
-
-        // Safety timeout fallback if API takes too long or fails to return task ID
-        if (!session.taskId || (Date.now() - session.createdAt > 30000)) {
-            session.status = 'completed';
-            session.audioUrl = FALLBACK_AUDIO;
-            activeSessions.set(token, session);
             return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
         }
 
@@ -98,9 +99,13 @@ app.get('/api/check-status', async (req, res) => {
 
         if (audioUrl || taskState.includes('succ') || taskState.includes('comp') || taskState.includes('complete')) {
             session.status = 'completed';
-            session.audioUrl = audioUrl || FALLBACK_AUDIO;
+            session.audioUrl = audioUrl;
             activeSessions.set(token, session);
             return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
+        }
+
+        if (taskState.includes('fail') || taskState.includes('error')) {
+            return res.json({ status: 'failed', error: 'Music generation failed upstream' });
         }
 
         return res.json({ status: 'processing' });
