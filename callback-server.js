@@ -19,7 +19,6 @@ const MUSIC_API_URL = "https://api.musicapi.ai/api/v1/sonic/create";
 const MUSIC_API_KEY = process.env.MUSIC_API_KEY;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "your-secret-key";
 
-// Replace with your actual deployed Railway public domain (e.g., https://your-app.up.railway.app)
 const RAILWAY_PUBLIC_URL = process.env.RAILWAY_STATIC_URL 
   ? `https://${process.env.RAILWAY_STATIC_URL}` 
   : "https://songs-backend-production.up.railway.app"; 
@@ -66,14 +65,12 @@ app.post('/api/song/create', async (req, res) => {
             return res.status(500).json({ error: 'Failed to initialize generation task with MusicAPI' });
         }
 
-        // Map the taskId back to the user's frontend session token
         activeSessions.set(taskId, {
             token: token,
             status: 'processing',
             details: { recipient, name, occasion, genre, memories }
         });
 
-        // Also track by token for frontend checks
         activeSessions.set(token, {
             taskId: taskId,
             status: 'processing',
@@ -125,13 +122,12 @@ app.post('/api/music-callback', (req, res) => {
 
         const eventData = req.body;
         const taskId = eventData.task_id;
-        const eventType = eventData.event; // e.g., "song.completed" or "song.failed"
+        const eventType = eventData.event;
 
         console.log(`[WEBHOOK RECEIVED] Task: ${taskId} | Event: ${eventType}`);
 
         let session = activeSessions.get(taskId);
         if (!session && eventData.data?.[0]?.clip_id) {
-            // Fallback search if indexed by token instead
             for (const [key, val] of activeSessions.entries()) {
                 if (val.taskId === taskId) {
                     session = val;
@@ -142,12 +138,10 @@ app.post('/api/music-callback', (req, res) => {
 
         if (session) {
             if (eventType === 'song.completed') {
-                // Extract audio URL based on structure schemas
                 const audioUrl = eventData.data?.[0]?.audio_url || eventData.audio_url;
                 session.status = 'completed';
                 session.audioUrl = audioUrl;
                 
-                // Update both mappings
                 activeSessions.set(taskId, session);
                 activeSessions.set(session.token, session);
                 console.log(`[SONG READY] Audio URL saved for task ${taskId}: ${audioUrl}`);
@@ -159,7 +153,6 @@ app.post('/api/music-callback', (req, res) => {
             }
         }
 
-        // Acknowledge receipt immediately with a 2xx status code
         return res.status(200).send("ok");
     } catch (err) {
         console.error("Error processing webhook:", err);
@@ -167,7 +160,7 @@ app.post('/api/music-callback', (req, res) => {
     }
 });
 
-// Frontend status polling endpoint (lightweight check against memory)
+// Frontend status polling endpoint returning stored audio URL
 app.get('/api/check-status', (req, res) => {
     const token = req.query.token;
     if (!token) {
@@ -180,7 +173,11 @@ app.get('/api/check-status', (req, res) => {
     }
 
     if (session.status === 'completed') {
-        return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
+        return res.json({ 
+            status: 'completed', 
+            audioUrl: session.audioUrl, 
+            details: session.details 
+        });
     }
 
     if (session.status === 'failed') {
