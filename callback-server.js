@@ -167,7 +167,11 @@ app.get('/api/check-status', (req, res) => {
         return res.status(400).json({ error: 'Missing token' });
     }
 
-    const session = activeSessions.get(token);
+    let session = activeSessions.get(token);
+    if (session && session.taskId) {
+        session = activeSessions.get(session.taskId) || session;
+    }
+
     if (!session) {
         return res.json({ status: 'processing' });
     }
