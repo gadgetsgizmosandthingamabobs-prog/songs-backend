@@ -1,16 +1,28 @@
 import express from 'express';
 import cors from 'cors';
+import crypto from 'node:crypto';
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+
+// Capture raw body specifically for webhook HMAC validation
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf.toString();
+    },
+  })
+);
 
 const activeSessions = new Map();
 const MUSIC_API_URL = "https://api.musicapi.ai/api/v1/sonic/create";
-const MUSIC_STATUS_URL = "https://api.musicapi.ai/api/v1/sonic/task/";
 const MUSIC_API_KEY = process.env.MUSIC_API_KEY;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "your-secret-key";
 
-const FALLBACK_AUDIO = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
+// Replace with your actual deployed Railway public domain (e.g., https://your-app.up.railway.app)
+const RAILWAY_PUBLIC_URL = process.env.RAILWAY_STATIC_URL 
+  ? `https://${process.env.RAILWAY_STATIC_URL}` 
+  : "https://songs-backend-production.up.railway.app"; 
 
 app.post('/api/song/create', async (req, res) => {
     try {
@@ -30,7 +42,9 @@ app.post('/api/song/create', async (req, res) => {
             mv: "sonic-v5-5",
             title: `${name}'s ${occasion || 'Special'} Song`,
             tags: genre || "Pop, melodic",
-            gpt_description_prompt: `A custom song for ${recipient || 'someone special'} named ${name}. Occasion: ${occasion}. Details: ${memories}`
+            gpt_description_prompt: `A custom song for ${recipient || 'someone special'} named ${name}. Occasion: ${occasion}. Details: ${memories}`,
+            webhook_url: `${RAILWAY_PUBLIC_URL}/api/music-callback`,
+            webhook_secret: WEBHOOK_SECRET
         };
 
         const response = await fetch(MUSIC_API_URL, {
@@ -49,20 +63,21 @@ app.post('/api/song/create', async (req, res) => {
 
         if (!taskId) {
             console.error("[ERROR] No task ID returned from MusicAPI:", data);
-            // Fallback gracefully so the user isn't stuck if the external API hiccups
-            activeSessions.set(token, {
-                status: 'completed',
-                audioUrl: FALLBACK_AUDIO,
-                details: { recipient, name, occasion, genre, memories }
-            });
-            return res.json({ success: true, taskId: 'fallback' });
+            return res.status(500).json({ error: 'Failed to initialize generation task with MusicAPI' });
         }
 
+        // Map the taskId back to the user's frontend session token
+        activeSessions.set(taskId, {
+            token: token,
+            status: 'processing',
+            details: { recipient, name, occasion, genre, memories }
+        });
+
+        // Also track by token for frontend checks
         activeSessions.set(token, {
             taskId: taskId,
             status: 'processing',
-            details: { recipient, name, occasion, genre, memories },
-            createdAt: Date.now()
+            details: { recipient, name, occasion, genre, memories }
         });
 
         return res.json({ success: true, taskId });
@@ -72,60 +87,107 @@ app.post('/api/song/create', async (req, res) => {
     }
 });
 
-app.get('/api/check-status', async (req, res) => {
+// WEBHOOK ENDPOINT: MusicAPI pushes results here automatically
+app.post('/api/music-callback', (req, res) => {
     try {
-        const token = req.query.token;
-        if (!token) {
-            return res.status(400).json({ error: 'Missing token' });
+        const timestamp = req.header("x-webhook-timestamp") || "";
+        const signature = req.header("x-webhook-signature") || "";
+
+        if (!timestamp || !signature) {
+            return res.status(400).send("Missing signature headers");
         }
 
-        let session = activeSessions.get(token);
-        if (!session) {
-            return res.json({ status: 'processing' });
+        // Verify HMAC signature
+        const provided = signature.replace(/^sha256=/i, "");
+        const expected = crypto
+            .createHmac("sha256", WEBHOOK_SECRET)
+            .update(`${timestamp}.${req.rawBody}`)
+            .digest("hex");
+
+        let providedBuf;
+        try {
+            providedBuf = Buffer.from(provided, "hex");
+        } catch (error) {
+            return res.status(401).send("Invalid signature encoding");
+        }
+        const expectedBuf = Buffer.from(expected, "hex");
+        
+        if (providedBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(providedBuf, expectedBuf)) {
+            return res.status(401).send("Invalid signature");
         }
 
-        if (session.status === 'completed') {
-            return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
+        // Replay protection (5 minute window)
+        const ts = Number(timestamp);
+        const age = Math.abs(Date.now() / 1000 - ts);
+        if (Number.isNaN(ts) || age > 300) {
+            return res.status(401).send("Expired timestamp");
         }
 
-        if (session.taskId === 'fallback' || !session.taskId) {
-            session.status = 'completed';
-            session.audioUrl = FALLBACK_AUDIO;
-            activeSessions.set(token, session);
-            return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
+        const eventData = req.body;
+        const taskId = eventData.task_id;
+        const eventType = eventData.event; // e.g., "song.completed" or "song.failed"
+
+        console.log(`[WEBHOOK RECEIVED] Task: ${taskId} | Event: ${eventType}`);
+
+        let session = activeSessions.get(taskId);
+        if (!session && eventData.data?.[0]?.clip_id) {
+            // Fallback search if indexed by token instead
+            for (const [key, val] of activeSessions.entries()) {
+                if (val.taskId === taskId) {
+                    session = val;
+                    break;
+                }
+            }
         }
 
-        const statusRes = await fetch(`${MUSIC_STATUS_URL}${session.taskId}`, {
-            headers: { 'Authorization': `Bearer ${MUSIC_API_KEY}` }
-        });
-
-        const statusData = await statusRes.json();
-        console.log(`[STATUS CHECK ${session.taskId}]:`, JSON.stringify(statusData));
-
-        const rawState = statusData.status || statusData.data?.status || statusData.state || '';
-        const taskState = String(rawState).toLowerCase();
-        const audioUrl = statusData.audio_url || statusData.audioUrl || statusData.data?.audio_url || statusData.data?.suno_song_list?.[0]?.audio_url || statusData.result?.audio_url;
-
-        if (audioUrl || taskState.includes('succ') || taskState.includes('comp') || taskState.includes('complete')) {
-            session.status = 'completed';
-            session.audioUrl = audioUrl || FALLBACK_AUDIO;
-            activeSessions.set(token, session);
-            return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
+        if (session) {
+            if (eventType === 'song.completed') {
+                // Extract audio URL based on structure schemas
+                const audioUrl = eventData.data?.[0]?.audio_url || eventData.audio_url;
+                session.status = 'completed';
+                session.audioUrl = audioUrl;
+                
+                // Update both mappings
+                activeSessions.set(taskId, session);
+                activeSessions.set(session.token, session);
+                console.log(`[SONG READY] Audio URL saved for task ${taskId}: ${audioUrl}`);
+            } else if (eventType === 'song.failed') {
+                session.status = 'failed';
+                activeSessions.set(taskId, session);
+                activeSessions.set(session.token, session);
+                console.error(`[SONG FAILED] Task ${taskId} failed:`, eventData.message);
+            }
         }
 
-        // Safety fallback timer (45 seconds max wait for external generation)
-        if (Date.now() - session.createdAt > 45000) {
-            session.status = 'completed';
-            session.audioUrl = FALLBACK_AUDIO;
-            activeSessions.set(token, session);
-            return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
-        }
-
-        return res.json({ status: 'processing' });
+        // Acknowledge receipt immediately with a 2xx status code
+        return res.status(200).send("ok");
     } catch (err) {
-        console.error("Error during status check:", err);
+        console.error("Error processing webhook:", err);
+        return res.status(500).send("Server error");
+    }
+});
+
+// Frontend status polling endpoint (lightweight check against memory)
+app.get('/api/check-status', (req, res) => {
+    const token = req.query.token;
+    if (!token) {
+        return res.status(400).json({ error: 'Missing token' });
+    }
+
+    const session = activeSessions.get(token);
+    if (!session) {
         return res.json({ status: 'processing' });
     }
+
+    if (session.status === 'completed') {
+        return res.json({ status: 'completed', audioUrl: session.audioUrl, details: session.details });
+    }
+
+    if (session.status === 'failed') {
+        return res.json({ status: 'failed', error: 'Song generation failed.' });
+    }
+
+    return res.json({ status: 'processing' });
 });
 
 const PORT = process.env.PORT || 8080;
