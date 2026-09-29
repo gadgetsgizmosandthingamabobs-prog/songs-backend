@@ -2,8 +2,14 @@ const express = require('express');
 const cors = require('cors');
 const app = express();
 
+// Explicit CORS configuration to allow all requests from your funnel
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
-app.use(cors());
 
 // Active sessions storage
 const activeSessions = new Map();
