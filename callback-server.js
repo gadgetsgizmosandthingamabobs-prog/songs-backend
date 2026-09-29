@@ -23,29 +23,36 @@ app.post('/api/generate-song', async (req, res) => {
             return res.status(500).json({ error: "Server configuration error: Missing MUSIC_API_KEY." });
         }
 
-        const songPrompt = `A high-quality ${genre || 'Pop'} song for ${name}, celebrating ${occasion}. Details: ${memories || 'A heartfelt personal tribute.'}`;
+        const songPrompt = `[Verse]\nThis song is dedicated to ${name} for ${occasion}.\nMemories: ${memories || 'A heartfelt personal tribute.'}\n\n[Chorus]\nCelebrating ${name}, our special bond today.`;
 
-        const response = await fetch('https://api.musicapi.ai/v1/generate', {
+        const apiResponse = await fetch('https://api.musicapi.ai/api/v1/sonic/create', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${MUSIC_API_KEY}`
             },
             body: JSON.stringify({
-                prompt: songPrompt,
+                custom_mode: true,
+                mv: 'sonic-v4-5',
+                title: `${name}'s ${occasion}`,
                 tags: `${genre || 'Pop'}, emotional, professional`,
-                mv: 'chirp-v3-5',
-                title: `${name}'s ${occasion}`
+                prompt: songPrompt
             })
         });
 
-        const data = await response.json();
-
-        if (!response.ok || (!data.task_id && !data.id)) {
-            throw new Error(data.message || 'Failed to initialize generation with music provider.');
+        const textResponse = await apiResponse.text();
+        let data;
+        try {
+            data = JSON.parse(textResponse);
+        } catch (e) {
+            throw new Error("MusicAPI returned non-JSON response: " + textResponse.substring(0, 100));
         }
 
-        const taskId = data.task_id || data.id;
+        if (!apiResponse.ok || (!data.task_id && !data.id && !data.data)) {
+            throw new Error(data.message || data.error || 'Failed to initialize generation with music provider.');
+        }
+
+        const taskId = data.task_id || data.id || (data.data && data.data.task_id);
 
         activeJobs.set(taskId, {
             status: 'processing',
@@ -74,17 +81,26 @@ app.get('/api/song-status', async (req, res) => {
     }
 
     try {
-        const response = await fetch(`https://api.musicapi.ai/v1/task/${token}`, {
+        const response = await fetch(`https://api.musicapi.ai/api/v1/sonic/task/${token}`, {
             headers: { 'Authorization': `Bearer ${MUSIC_API_KEY}` }
         });
-        const data = await response.json();
+        const textResp = await response.text();
+        let data;
+        try {
+            data = JSON.parse(textResp);
+        } catch (e) {
+            return res.json({ status: 'processing' });
+        }
 
-        if (data.status === 'completed' || data.audio_url || data.url) {
+        const taskState = data.status || data.state || (data.data && data.data.state);
+        const audioUrl = data.audio_url || data.url || (data.data && (data.data[0]?.audio_url || data.data.audio_url));
+
+        if (taskState === 'succeeded' || taskState === 'completed' || audioUrl) {
             job.status = 'completed';
-            job.audioUrl = data.audio_url || data.url;
+            job.audioUrl = audioUrl;
             activeJobs.set(token, job);
             return res.json({ status: 'completed', audioUrl: job.audioUrl });
-        } else if (data.status === 'failed') {
+        } else if (taskState === 'failed') {
             job.status = 'failed';
             activeJobs.set(token, job);
             return res.json({ status: 'failed' });
