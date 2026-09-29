@@ -1,15 +1,13 @@
 {
   "name": "songs-backend",
   "version": "1.0.0",
-  "description": "MusicAPI callback and generation backend",
+  "description": "Backend server for custom song generation",
   "main": "callback-server.js",
-  "type": "module",
   "scripts": {
     "start": "node callback-server.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "node-fetch": "^3.3.2"
+    "express": "^4.19.2"
   }
 }
