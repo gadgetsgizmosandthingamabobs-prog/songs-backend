@@ -1,61 +1,113 @@
 const express = require('express');
 const cors = require('cors');
+const fetch = require('node-fetch');
+
 const app = express();
-
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
+app.use(cors());
 app.use(express.json());
 
-const activeSessions = new Map();
+const PORT = process.env.PORT || 3000;
+const MUSIC_API_KEY = process.env.MUSIC_API_KEY;
+
+// Store active generation jobs in memory
+const activeJobs = new Map();
 
 app.post('/api/generate-song', async (req, res) => {
     try {
         const { name, occasion, genre, memories } = req.body;
-        
+
         if (!name || !occasion) {
             return res.status(400).json({ error: "Missing required fields (name or occasion)." });
         }
 
-        const token = "token_" + Date.now();
-        const taskId = "task_" + Date.now();
+        if (!MUSIC_API_KEY) {
+            return res.status(500).json({ error: "Server configuration error: Missing MUSIC_API_KEY." });
+        }
 
-        activeSessions.set(token, {
-            taskId: taskId,
-            status: 'processing',
-            details: { name, occasion, genre, memories }
+        const songPrompt = `A high-quality ${genre || 'Pop'} song for ${name}, celebrating ${occasion}. Details: ${memories || 'A heartfelt personal tribute.'}`;
+
+        // Call your music generation provider (e.g., MusicAPI / Suno)
+        const response = await fetch('https://api.musicapi.ai/v1/generate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${MUSIC_API_KEY}`
+            },
+            body: JSON.stringify({
+                prompt: songPrompt,
+                tags: `${genre || 'Pop'}, emotional, professional`,
+                mv: 'chirp-v3-5',
+                title: `${name}'s ${occasion}`
+            })
         });
 
-        activeSessions.set(taskId, {
-            token: token,
+        const data = await response.json();
+
+        if (!response.ok || (!data.task_id && !data.id)) {
+            throw new Error(data.message || 'Failed to initialize generation with music provider.');
+        }
+
+        const taskId = data.task_id || data.id;
+
+        activeJobs.set(taskId, {
             status: 'processing',
-            details: { name, occasion, genre, memories }
+            createdAt: Date.now(),
+            audioUrl: null,
+            metadata: { name, occasion, genre, memories }
         });
 
-        return res.json({ success: true, token: token, taskId: taskId });
+        return res.json({ token: taskId, status: 'processing' });
+
     } catch (err) {
-        console.error("Server error during creation:", err);
-        return res.status(500).json({ error: err.message });
+        console.error('Generation Error:', err);
+        return res.status(500).json({ error: err.message || 'Internal server generation failure.' });
     }
 });
 
-app.post('/api/music-callback', (req, res) => {
+app.get('/api/song-status', async (req, res) => {
+    const { token } = req.query;
+    if (!token || !activeJobs.has(token)) {
+        return res.status(404).json({ error: 'Invalid or expired session token.' });
+    }
+
+    const job = activeJobs.get(token);
+    if (job.status === 'completed') {
+        return res.json({ status: 'completed', audioUrl: job.audioUrl });
+    }
+
     try {
-        const timestamp = req.header("x-webhook-timestamp") || "";
-        const signature = req.header("x-webhook-signature") || "";
-        const data = req.body;
-        
-        res.json({ received: true });
+        const response = await fetch(`https://api.musicapi.ai/v1/task/${token}`, {
+            headers: { 'Authorization': `Bearer ${MUSIC_API_KEY}` }
+        });
+        const data = await response.json();
+
+        if (data.status === 'completed' || data.audio_url || data.url) {
+            job.status = 'completed';
+            job.audioUrl = data.audio_url || data.url;
+            activeJobs.set(token, job);
+            return res.json({ status: 'completed', audioUrl: job.audioUrl });
+        } else if (data.status === 'failed') {
+            job.status = 'failed';
+            activeJobs.set(token, job);
+            return res.json({ status: 'failed' });
+        }
+
+        return res.json({ status: 'processing' });
     } catch (err) {
-        console.error("Webhook error:", err);
-        res.status(500).json({ error: err.message });
+        console.error('Status check error:', err);
+        return res.json({ status: 'processing' });
     }
 });
 
-const PORT = process.env.PORT || 8080;
+app.get('/api/stream-audio', (req, res) => {
+    const { token } = req.query;
+    const job = activeJobs.get(token);
+    if (job && job.audioUrl) {
+        return res.redirect(job.audioUrl);
+    }
+    return res.status(404).json({ error: 'Audio stream not ready or invalid token.' });
+});
+
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Production server running on port ${PORT}`);
 });
