@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch');
 
 const app = express();
 app.use(cors());
@@ -26,7 +25,6 @@ app.post('/api/generate-song', async (req, res) => {
 
         const songPrompt = `A high-quality ${genre || 'Pop'} song for ${name}, celebrating ${occasion}. Details: ${memories || 'A heartfelt personal tribute.'}`;
 
-        // Call your music generation provider (e.g., MusicAPI / Suno)
         const response = await fetch('https://api.musicapi.ai/v1/generate', {
             method: 'POST',
             headers: {
