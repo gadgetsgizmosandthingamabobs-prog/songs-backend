@@ -52,11 +52,14 @@ app.post('/api/generate-song', async (req, res) => {
             throw new Error(data.message || data.error || `MusicAPI error (Status ${apiResponse.status})`);
         }
 
-        const taskId = data.task_id || data.id || (data.data && (data.data.task_id || data.data[0]?.task_id));
+        const rawTaskId = data.task_id || data.id || (data.data && (data.data.task_id || data.data[0]?.task_id));
 
-        if (!taskId) {
+        if (!rawTaskId) {
             throw new Error("MusicAPI did not return a valid task ID. Response: " + JSON.stringify(data));
         }
+
+        // Sanitize token to remove slashes that break URLs and frontend routing
+        const taskId = String(rawTaskId).replace(/[\/\\]/g, '-');
 
         activeJobs.set(taskId, {
             status: 'processing',
