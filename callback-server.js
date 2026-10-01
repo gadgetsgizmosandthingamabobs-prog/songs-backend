@@ -58,8 +58,8 @@ app.post('/api/generate-song', async (req, res) => {
             throw new Error("MusicAPI did not return a valid task ID. Response: " + JSON.stringify(data));
         }
 
-        // Sanitize token to remove slashes that break URLs and frontend routing
-        const taskId = String(rawTaskId).replace(/[\/\\]/g, '-');
+        // Use encodeURIComponent to keep the task ID URL-safe even if it contains slashes or special characters
+        const taskId = encodeURIComponent(String(rawTaskId));
 
         activeJobs.set(taskId, {
             status: 'processing',
@@ -100,11 +100,15 @@ app.get('/api/song-status', async (req, res) => {
         }
 
         const taskState = data.status || data.state || (data.data && (data.data.status || data.data.state || data.data[0]?.state));
-        const audioUrl = data.audio_url || data.url || (data.data && (data.data.audio_url || data.data[0]?.audio_url));
+        
+        // Check standard paths where MusicAPI places the resulting audio URL
+        const audioUrl = data.audio_url || data.url || 
+                         (data.data && (data.data.audio_url || data.data.url || data.data[0]?.audio_url || data.data[0]?.url)) ||
+                         (data.clips && data.clips[0]?.audio_url);
 
         if (taskState === 'succeeded' || taskState === 'completed' || audioUrl) {
             job.status = 'completed';
-            job.audioUrl = audioUrl;
+            job.audioUrl = audioUrl || (data.data && data.data[0]?.audio_url);
             activeJobs.set(token, job);
             return res.json({ status: 'completed', audioUrl: job.audioUrl });
         } else if (taskState === 'failed') {
