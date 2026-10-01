@@ -48,11 +48,15 @@ app.post('/api/generate-song', async (req, res) => {
             throw new Error("MusicAPI returned non-JSON response: " + textResponse.substring(0, 100));
         }
 
-        if (!apiResponse.ok || (!data.task_id && !data.id && !data.data)) {
-            throw new Error(data.message || data.error || 'Failed to initialize generation with music provider.');
+        if (!apiResponse.ok) {
+            throw new Error(data.message || data.error || `MusicAPI error (Status ${apiResponse.status})`);
         }
 
-        const taskId = data.task_id || data.id || (data.data && data.data.task_id);
+        const taskId = data.task_id || data.id || (data.data && (data.data.task_id || data.data[0]?.task_id));
+
+        if (!taskId) {
+            throw new Error("MusicAPI did not return a valid task ID. Response: " + JSON.stringify(data));
+        }
 
         activeJobs.set(taskId, {
             status: 'processing',
@@ -92,8 +96,8 @@ app.get('/api/song-status', async (req, res) => {
             return res.json({ status: 'processing' });
         }
 
-        const taskState = data.status || data.state || (data.data && data.data.state);
-        const audioUrl = data.audio_url || data.url || (data.data && (data.data[0]?.audio_url || data.data.audio_url));
+        const taskState = data.status || data.state || (data.data && (data.data.status || data.data.state || data.data[0]?.state));
+        const audioUrl = data.audio_url || data.url || (data.data && (data.data.audio_url || data.data[0]?.audio_url));
 
         if (taskState === 'succeeded' || taskState === 'completed' || audioUrl) {
             job.status = 'completed';
@@ -103,7 +107,7 @@ app.get('/api/song-status', async (req, res) => {
         } else if (taskState === 'failed') {
             job.status = 'failed';
             activeJobs.set(token, job);
-            return res.json({ status: 'failed' });
+            return res.json({ status: 'failed', error: 'Music generation failed from provider.' });
         }
 
         return res.json({ status: 'processing' });
