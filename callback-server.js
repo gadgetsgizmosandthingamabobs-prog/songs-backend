@@ -58,8 +58,8 @@ app.post('/api/generate-song', async (req, res) => {
             throw new Error("MusicAPI did not return a valid task ID. Response: " + JSON.stringify(data));
         }
 
-        // Use encodeURIComponent to keep the task ID URL-safe even if it contains slashes or special characters
-        const taskId = encodeURIComponent(String(rawTaskId));
+        // Sanitize task ID by replacing any slashes with hyphens so it's completely URL-safe
+        const taskId = String(rawTaskId).replace(/[\/\\]/g, '-');
 
         activeJobs.set(taskId, {
             status: 'processing',
@@ -101,7 +101,6 @@ app.get('/api/song-status', async (req, res) => {
 
         const taskState = data.status || data.state || (data.data && (data.data.status || data.data.state || data.data[0]?.state));
         
-        // Check standard paths where MusicAPI places the resulting audio URL
         const audioUrl = data.audio_url || data.url || 
                          (data.data && (data.data.audio_url || data.data.url || data.data[0]?.audio_url || data.data[0]?.url)) ||
                          (data.clips && data.clips[0]?.audio_url);
