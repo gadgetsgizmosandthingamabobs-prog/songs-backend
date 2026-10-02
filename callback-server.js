@@ -21,10 +21,13 @@ app.post('/api/generate-song', async (req, res) => {
         }
 
         if (!MUSIC_API_KEY) {
+            console.error("CRITICAL: MUSIC_API_KEY is missing in environment variables.");
             return res.status(500).json({ error: "Server configuration error: Missing MUSIC_API_KEY." });
         }
 
         const songPrompt = `[Verse]\nThis song is dedicated to ${name} for ${occasion}.\nMemories: ${memories || 'A heartfelt personal tribute.'}\n\n[Chorus]\nCelebrating ${name}, our special bond today.`;
+
+        console.log(`Sending song generation request to MusicAPI for ${name} (${occasion})...`);
 
         const apiResponse = await fetch('https://api.musicapi.ai/api/v1/sonic/create', {
             method: 'POST',
@@ -33,8 +36,9 @@ app.post('/api/generate-song', async (req, res) => {
                 'Authorization': `Bearer ${MUSIC_API_KEY}`
             },
             body: JSON.stringify({
+                task_type: 'create_music',
                 custom_mode: true,
-                mv: 'sonic-v4-5',
+                mv: 'sonic-v5',
                 title: `${name}'s ${occasion}`,
                 tags: `${genre || 'Pop'}, emotional, professional`,
                 prompt: songPrompt
@@ -46,20 +50,22 @@ app.post('/api/generate-song', async (req, res) => {
         try {
             data = JSON.parse(textResponse);
         } catch (e) {
-            throw new Error("MusicAPI returned non-JSON response.");
+            console.error("MusicAPI non-JSON response:", textResponse);
+            throw new Error("MusicAPI returned an invalid response format.");
         }
 
         if (!apiResponse.ok) {
+            console.error("MusicAPI error response:", data);
             throw new Error(data.message || data.error || `MusicAPI error (Status ${apiResponse.status})`);
         }
 
-        // Extract task ID securely
+        // Extract task ID securely from response formats
         const rawTaskId = data.task_id || data.id || (data.data && (data.data.task_id || data.data[0]?.task_id));
         if (!rawTaskId) {
+            console.error("Missing task ID in MusicAPI response:", data);
             throw new Error("MusicAPI did not return a valid task ID.");
         }
 
-        // Sanitize slashes to prevent query parsing bugs
         const taskId = String(rawTaskId).replace(/[\/\\]/g, '-');
 
         activeJobs.set(taskId, {
@@ -69,10 +75,10 @@ app.post('/api/generate-song', async (req, res) => {
             metadata: { name, occasion, genre, memories }
         });
 
-        console.log(`Generation started. Token: ${taskId}`);
+        console.log(`Generation successfully queued. Task ID/Token: ${taskId}`);
         return res.json({ token: taskId, status: 'processing' });
     } catch (err) {
-        console.error('Generation Error:', err);
+        console.error('Generation Endpoint Error:', err);
         return res.status(500).json({ error: err.message || 'Internal server generation failure.' });
     }
 });
@@ -102,20 +108,23 @@ app.get('/api/song-status', async (req, res) => {
             return res.json({ status: 'processing' });
         }
 
-        const taskState = data.status || data.state || (data.data && (data.data.status || data.data.state || data.data[0]?.state));
-        const audioUrl = data.audio_url || data.url || 
-                         (data.data && (data.data.audio_url || data.data.url || data.data[0]?.audio_url || data.data[0]?.url)) ||
-                         (data.clips && data.clips[0]?.audio_url);
+        // Parse task object according to MusicAPI documentation structure
+        const taskObj = Array.isArray(data.data) ? data.data[0] : (data.data || data);
+        const taskState = taskObj.status || taskObj.state || data.status || data.state;
+        const audioUrl = taskObj.audio_url || taskObj.url || data.audio_url || data.url || (data.clips && data.clips[0]?.audio_url);
+
+        console.log(`Polling task ${token} -> State: ${taskState || 'unknown'}, Audio URL found: ${!!audioUrl}`);
 
         if (taskState === 'succeeded' || taskState === 'completed' || audioUrl) {
             job.status = 'completed';
-            job.audioUrl = audioUrl || (data.data && data.data[0]?.audio_url);
+            job.audioUrl = audioUrl;
             activeJobs.set(token, job);
-            console.log(`Song completed successfully for token: ${token}`);
+            console.log(`Song generation completed for token: ${token}`);
             return res.json({ status: 'completed', audioUrl: job.audioUrl });
-        } else if (taskState === 'failed') {
+        } else if (taskState === 'failed' || taskState === 'error') {
             job.status = 'failed';
             activeJobs.set(token, job);
+            console.error(`Song generation failed for token ${token}`);
             return res.json({ status: 'failed', error: 'Music generation failed from provider.' });
         }
 
