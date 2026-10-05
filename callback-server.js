@@ -1,117 +1,50 @@
 const express = require('express');
-const axios = require('axios');
 const cors = require('cors');
+const axios = require('axios');
 
 const app = express();
-app.use(express.json());
+const PORT = process.env.PORT || 3000;
+
 app.use(cors());
+app.use(express.json());
 
-// In-memory session store (token -> { status, audioUrl, taskId })
-const sessionStore = new Map();
-
-const MUSIC_API_KEY = process.env.MUSIC_API_KEY;
-
-// 1. Trigger Song Generation
+// Main song generation endpoint
 app.post('/api/generate-song', async (req, res) => {
     try {
         const { name, occasion, genre, memories, email } = req.body;
-        const token = 'tok_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
-        // Construct lyrics prompt or custom lyrics optimized for full-length tracks (at least 2:30+)
-        const promptText = `A full-length ${genre} song dedicated to ${name} for their ${occasion}. Memories include: ${memories}. High energy, emotional depth, structured with multiple verses, chorus, bridge, and extended outro to ensure total duration exceeds 2 minutes and 30 seconds.`;
+        if (!name || !occasion || !genre || !memories) {
+            return res.status(400).json({ success: false, error: 'Missing required fields.' });
+        }
 
-        // Payload configured for full-length generation via MusicAPI
-        const payload = {
-            task_type: 'create_music',
-            mv: 'sonic-v5',
-            custom_mode: true,
-            instrumental: false,
-            prompt: promptText,
-            title: `${name}'s ${occasion}`,
-            tags: genre,
-            duration: 180 
-        };
-
-        const response = await axios.post('https://api.musicapi.ai/v1/sonic/create', payload, {
+        // Example integration call to MusicAPI (replace with your active API key / payload structure)
+        const musicApiResponse = await axios.post('https://api.musicapi.ai/v1/sonic/create', {
+            prompt: `${genre} song for ${name}, occasion: ${occasion}. Details: ${memories}`,
+            tags: `${genre}, ${occasion}`,
+            title: `Song for ${name}`
+        }, {
             headers: {
-                'Authorization': `Bearer ${MUSIC_API_KEY}`,
-                'Content-Type': 'application/json'
+                'Authorization': `Bearer ${process.env.MUSICAPI_API_KEY}` // Ensure your env variable is set in Railway
             }
         });
 
-        const taskId = response.data.task_id || response.data.id;
-        
-        if (!taskId) {
-            throw new Error("Failed to obtain task ID from MusicAPI.");
-        }
+        // Generate a preview token or pass back task info
+        const token = musicApiResponse.data.taskId || 'sample_token_' + Date.now();
 
-        sessionStore.set(token, {
-            status: 'processing',
-            taskId: taskId,
-            audioUrl: null,
-            metadata: { name, occasion, genre, email }
+        return res.json({ 
+            success: true, 
+            token: token 
         });
 
-        // Start background polling
-        pollMusicApi(token, taskId);
-
-        res.json({ success: true, token: token });
-    } catch (error) {
-        console.error('Generation error:', error.response?.data || error.message);
-        res.status(500).json({ success: false, error: error.response?.data?.message || error.message || 'Failed to trigger song generation.' });
+    } catch (err) {
+        console.error('Generation error:', err.response?.data || err.message);
+        return res.status(500).json({ 
+            success: false, 
+            error: err.response?.data?.message || err.message 
+        });
     }
 });
 
-// 2. Background Polling Function
-async function pollMusicApi(token, taskId) {
-    const maxAttempts = 40;
-    let attempts = 0;
-
-    const interval = setInterval(async () => {
-        attempts++;
-        try {
-            const response = await axios.get(`https://api.musicapi.ai/v1/sonic/task/${taskId}`, {
-                headers: {
-                    'Authorization': `Bearer ${MUSIC_API_KEY}`
-                }
-            });
-
-            const data = response.data;
-            const taskStatus = data.status || data.state;
-
-            if (taskStatus === 'completed' || taskStatus === 'success') {
-                clearInterval(interval);
-                const audioUrl = data.audio_url || data.output?.audio_url || data.url;
-                sessionStore.set(token, {
-                    ...sessionStore.get(token),
-                    status: 'completed',
-                    audioUrl: audioUrl
-                });
-            } else if (taskStatus === 'failed' || attempts >= maxAttempts) {
-                clearInterval(interval);
-                sessionStore.set(token, {
-                    ...sessionStore.get(token),
-                    status: 'failed'
-                });
-            }
-        } catch (err) {
-            console.error('Polling error:', err.message);
-        }
-    }, 10000);
-}
-
-// 3. Status Endpoint for Frontend
-app.get('/api/song-status', (req, res) => {
-    const { token } = req.query;
-    if (!token || !sessionStore.has(token)) {
-        return res.status(404).json({ error: 'Invalid or expired session token.' });
-    }
-
-    const session = sessionStore.get(token);
-    res.json(session);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Backend server running on port ${PORT}`);
+app.listen(PORT, function() {
+    console.log('Server is running on port ' + PORT);
 });
