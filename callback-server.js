@@ -18,7 +18,7 @@ app.post('/api/generate-song', async (req, res) => {
         const token = 'tok_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
         // Construct lyrics prompt or custom lyrics optimized for full-length tracks (at least 2:30+)
-        const promptText = `A full-length ${genre} song dedicated to ${name} for their ${occasion}. Memories include: ${memories}. High energy, emotional depth, structured with multiple verses, chorus, bridge, guitar solo, and extended outro to ensure total duration exceeds 2 minutes and 30 seconds.`;
+        const promptText = `A full-length ${genre} song dedicated to ${name} for their ${occasion}. Memories include: ${memories}. High energy, emotional depth, structured with multiple verses, chorus, bridge, and extended outro to ensure total duration exceeds 2 minutes and 30 seconds.`;
 
         // Payload configured for full-length generation via MusicAPI
         const payload = {
@@ -58,7 +58,7 @@ app.post('/api/generate-song', async (req, res) => {
         res.json({ success: true, token: token });
     } catch (error) {
         console.error('Generation error:', error.response?.data || error.message);
-        res.status(500).json({ success: false, error: 'Failed to trigger song generation.' });
+        res.status(500).json({ success: false, error: error.response?.data?.message || error.message || 'Failed to trigger song generation.' });
     }
 });
 
