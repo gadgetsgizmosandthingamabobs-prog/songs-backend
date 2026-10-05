@@ -1,140 +1,117 @@
 const express = require('express');
+const axios = require('axios');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
 app.use(express.json());
+app.use(cors());
 
-const PORT = process.env.PORT || 3000;
+// In-memory session store (token -> { status, audioUrl, taskId })
+const sessionStore = new Map();
+
 const MUSIC_API_KEY = process.env.MUSIC_API_KEY;
 
-// In-memory job tracker
-const activeJobs = new Map();
-
-// 1. Generate Song Endpoint
+// 1. Trigger Song Generation
 app.post('/api/generate-song', async (req, res) => {
     try {
-        const { name, occasion, genre, memories } = req.body;
+        const { name, occasion, genre, memories, email } = req.body;
+        const token = 'tok_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
-        if (!name || !occasion) {
-            return res.status(400).json({ error: "Missing required fields (name or occasion)." });
-        }
+        // Construct lyrics prompt or custom lyrics optimized for full-length tracks (at least 2:30+)
+        const promptText = `A full-length ${genre} song dedicated to ${name} for their ${occasion}. Memories include: ${memories}. High energy, emotional depth, structured with multiple verses, chorus, bridge, guitar solo, and extended outro to ensure total duration exceeds 2 minutes and 30 seconds.`;
 
-        if (!MUSIC_API_KEY) {
-            console.error("CRITICAL: MUSIC_API_KEY is missing in environment variables.");
-            return res.status(500).json({ error: "Server configuration error: Missing MUSIC_API_KEY." });
-        }
+        // Payload configured for full-length generation via MusicAPI
+        const payload = {
+            task_type: 'create_music',
+            mv: 'sonic-v5',
+            custom_mode: true,
+            instrumental: false,
+            prompt: promptText,
+            title: `${name}'s ${occasion}`,
+            tags: genre,
+            duration: 180 
+        };
 
-        const songPrompt = `[Verse]\nThis song is dedicated to ${name} for ${occasion}.\nMemories: ${memories || 'A heartfelt personal tribute.'}\n\n[Chorus]\nCelebrating ${name}, our special bond today.`;
-
-        console.log(`Sending song generation request to MusicAPI for ${name} (${occasion})...`);
-
-        const apiResponse = await fetch('https://api.musicapi.ai/api/v1/sonic/create', {
-            method: 'POST',
+        const response = await axios.post('https://api.musicapi.ai/v1/sonic/create', payload, {
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${MUSIC_API_KEY}`
-            },
-            body: JSON.stringify({
-                task_type: 'create_music',
-                custom_mode: true,
-                mv: 'sonic-v5',
-                title: `${name}'s ${occasion}`,
-                tags: `${genre || 'Pop'}, emotional, professional`,
-                prompt: songPrompt
-            })
+                'Authorization': `Bearer ${MUSIC_API_KEY}`,
+                'Content-Type': 'application/json'
+            }
         });
 
-        const textResponse = await apiResponse.text();
-        let data;
-        try {
-            data = JSON.parse(textResponse);
-        } catch (e) {
-            console.error("MusicAPI non-JSON response:", textResponse);
-            throw new Error("MusicAPI returned an invalid response format.");
+        const taskId = response.data.task_id || response.data.id;
+        
+        if (!taskId) {
+            throw new Error("Failed to obtain task ID from MusicAPI.");
         }
 
-        if (!apiResponse.ok) {
-            console.error("MusicAPI error response:", data);
-            throw new Error(data.message || data.error || `MusicAPI error (Status ${apiResponse.status})`);
-        }
-
-        // Extract task ID securely from response formats
-        const rawTaskId = data.task_id || data.id || (data.data && (data.data.task_id || data.data[0]?.task_id));
-        if (!rawTaskId) {
-            console.error("Missing task ID in MusicAPI response:", data);
-            throw new Error("MusicAPI did not return a valid task ID.");
-        }
-
-        const taskId = String(rawTaskId).replace(/[\/\\]/g, '-');
-
-        activeJobs.set(taskId, {
+        sessionStore.set(token, {
             status: 'processing',
-            createdAt: Date.now(),
+            taskId: taskId,
             audioUrl: null,
-            metadata: { name, occasion, genre, memories }
+            metadata: { name, occasion, genre, email }
         });
 
-        console.log(`Generation successfully queued. Task ID/Token: ${taskId}`);
-        return res.json({ token: taskId, status: 'processing' });
-    } catch (err) {
-        console.error('Generation Endpoint Error:', err);
-        return res.status(500).json({ error: err.message || 'Internal server generation failure.' });
+        // Start background polling
+        pollMusicApi(token, taskId);
+
+        res.json({ success: true, token: token });
+    } catch (error) {
+        console.error('Generation error:', error.response?.data || error.message);
+        res.status(500).json({ success: false, error: 'Failed to trigger song generation.' });
     }
 });
 
-// 2. Song Status Polling Endpoint
-app.get('/api/song-status', async (req, res) => {
+// 2. Background Polling Function
+async function pollMusicApi(token, taskId) {
+    const maxAttempts = 40;
+    let attempts = 0;
+
+    const interval = setInterval(async () => {
+        attempts++;
+        try {
+            const response = await axios.get(`https://api.musicapi.ai/v1/sonic/task/${taskId}`, {
+                headers: {
+                    'Authorization': `Bearer ${MUSIC_API_KEY}`
+                }
+            });
+
+            const data = response.data;
+            const taskStatus = data.status || data.state;
+
+            if (taskStatus === 'completed' || taskStatus === 'success') {
+                clearInterval(interval);
+                const audioUrl = data.audio_url || data.output?.audio_url || data.url;
+                sessionStore.set(token, {
+                    ...sessionStore.get(token),
+                    status: 'completed',
+                    audioUrl: audioUrl
+                });
+            } else if (taskStatus === 'failed' || attempts >= maxAttempts) {
+                clearInterval(interval);
+                sessionStore.set(token, {
+                    ...sessionStore.get(token),
+                    status: 'failed'
+                });
+            }
+        } catch (err) {
+            console.error('Polling error:', err.message);
+        }
+    }, 10000);
+}
+
+// 3. Status Endpoint for Frontend
+app.get('/api/song-status', (req, res) => {
     const { token } = req.query;
-    if (!token || !activeJobs.has(token)) {
+    if (!token || !sessionStore.has(token)) {
         return res.status(404).json({ error: 'Invalid or expired session token.' });
     }
 
-    const job = activeJobs.get(token);
-    if (job.status === 'completed') {
-        return res.json({ status: 'completed', audioUrl: job.audioUrl });
-    }
-
-    try {
-        const response = await fetch(`https://api.musicapi.ai/api/v1/sonic/task/${token}`, {
-            headers: { 'Authorization': `Bearer ${MUSIC_API_KEY}` }
-        });
-        
-        const textResp = await response.text();
-        let data;
-        try {
-            data = JSON.parse(textResp);
-        } catch (e) {
-            return res.json({ status: 'processing' });
-        }
-
-        // Parse task object according to MusicAPI documentation structure
-        const taskObj = Array.isArray(data.data) ? data.data[0] : (data.data || data);
-        const taskState = taskObj.status || taskObj.state || data.status || data.state;
-        const audioUrl = taskObj.audio_url || taskObj.url || data.audio_url || data.url || (data.clips && data.clips[0]?.audio_url);
-
-        console.log(`Polling task ${token} -> State: ${taskState || 'unknown'}, Audio URL found: ${!!audioUrl}`);
-
-        if (taskState === 'succeeded' || taskState === 'completed' || audioUrl) {
-            job.status = 'completed';
-            job.audioUrl = audioUrl;
-            activeJobs.set(token, job);
-            console.log(`Song generation completed for token: ${token}`);
-            return res.json({ status: 'completed', audioUrl: job.audioUrl });
-        } else if (taskState === 'failed' || taskState === 'error') {
-            job.status = 'failed';
-            activeJobs.set(token, job);
-            console.error(`Song generation failed for token ${token}`);
-            return res.json({ status: 'failed', error: 'Music generation failed from provider.' });
-        }
-
-        return res.json({ status: 'processing' });
-    } catch (err) {
-        console.error('Polling Error:', err);
-        return res.json({ status: 'processing' });
-    }
+    const session = sessionStore.get(token);
+    res.json(session);
 });
 
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Production server running on port ${PORT}`);
+    console.log(`Backend server running on port ${PORT}`);
 });
