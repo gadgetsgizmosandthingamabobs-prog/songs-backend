@@ -27,7 +27,8 @@ app.post('/api/generate-song', async function(req, res) {
             return res.status(500).json({ success: false, error: 'Server API key not configured.' });
         }
 
-        const musicApiResponse = await axios.post('https://api.musicapi.ai/v1/sonic/create', {
+        // Corrected MusicAPI endpoint with /api included
+        const musicApiResponse = await axios.post('https://api.musicapi.ai/api/v1/sonic/create', {
             prompt: `${genre} song for ${name}, occasion: ${occasion}. Details: ${memories}`,
             tags: `${genre}, ${occasion}`,
             title: `Song for ${name}`
@@ -51,7 +52,7 @@ app.post('/api/generate-song', async function(req, res) {
     }
 });
 
-// Fallback route without /api prefix
+// Fallback route without /api prefix for the backend itself
 app.post('/generate-song', async function(req, res) {
     try {
         const { name, occasion, genre, memories } = req.body || {};
@@ -65,7 +66,7 @@ app.post('/generate-song', async function(req, res) {
             return res.status(500).json({ success: false, error: 'Server API key not configured.' });
         }
 
-        const musicApiResponse = await axios.post('https://api.musicapi.ai/v1/sonic/create', {
+        const musicApiResponse = await axios.post('https://api.musicapi.ai/api/v1/sonic/create', {
             prompt: `${genre} song for ${name}, occasion: ${occasion}. Details: ${memories}`,
             tags: `${genre}, ${occasion}`,
             title: `Song for ${name}`
