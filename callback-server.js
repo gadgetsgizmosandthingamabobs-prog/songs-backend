@@ -26,7 +26,8 @@ app.post('/api/generate-song', async function(req, res) {
             return res.status(400).json({ success: false, error: 'Missing required fields.' });
         }
 
-        const apiKey = process.env.MUSICAPI_API_KEY;
+        // Check both versions of the environment variable name to prevent any mismatch
+        const apiKey = process.env.MUSIC_API_KEY || process.env.MUSICAPI_API_KEY;
         if (!apiKey) {
             return res.status(500).json({ success: false, error: 'Server API key not configured.' });
         }
