@@ -8,10 +8,12 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Health check route
 app.get('/', function(req, res) {
     res.send('Songs From Your Heart Backend is running and online!');
 });
 
+// Primary song generation endpoint
 app.post('/api/generate-song', async function(req, res) {
     try {
         const { name, occasion, genre, memories } = req.body || {};
@@ -25,15 +27,13 @@ app.post('/api/generate-song', async function(req, res) {
             return res.status(500).json({ success: false, error: 'Server API key not configured.' });
         }
 
-        // Standardized payload structure
+        // Exact MusicAPI payload contract format
         const payload = {
-            prompt: `${genre} song for ${name}, occasion: ${occasion}. Details: ${memories}`,
-            tags: `${genre}, ${occasion}`,
-            title: `Song for ${name}`,
+            gpt_description_prompt: `${genre} song for ${name}, celebrating ${occasion}. Details: ${memories}`.substring(0, 195),
+            tags: `${genre}, ${occasion}`.substring(0, 195),
+            title: `Song for ${name}`.substring(0, 75),
             mv: 'sonic-v3-5'
         };
-
-        console.log('Sending payload to MusicAPI:', payload);
 
         const musicApiResponse = await axios.post('https://api.musicapi.ai/api/v1/sonic/create', payload, {
             headers: {
@@ -42,20 +42,21 @@ app.post('/api/generate-song', async function(req, res) {
             }
         });
 
-        const token = (musicApiResponse.data && musicApiResponse.data.taskId) || ('sample_token_' + Date.now());
+        const token = (musicApiResponse.data && (musicApiResponse.data.taskId || musicApiResponse.data.task_id)) || ('sample_token_' + Date.now());
 
         return res.json({ success: true, token: token });
 
     } catch (err) {
-        console.error('MusicAPI detailed error response:', err.response?.data);
-        const detailedError = err.response?.data?.error || err.response?.data?.message || err.message || 'Internal Server Error';
+        console.error('Generation error:', err.response?.data || err.message);
+        const errorMsg = err.response?.data?.error || err.response?.data?.message || err.message || 'Internal Server Error';
         return res.status(500).json({ 
             success: false, 
-            error: typeof detailedError === 'object' ? JSON.stringify(detailedError) : detailedError
+            error: typeof errorMsg === 'object' ? JSON.stringify(errorMsg) : errorMsg
         });
     }
 });
 
+// Fallback route without /api prefix
 app.post('/generate-song', async function(req, res) {
     try {
         const { name, occasion, genre, memories } = req.body || {};
@@ -70,9 +71,9 @@ app.post('/generate-song', async function(req, res) {
         }
 
         const payload = {
-            prompt: `${genre} song for ${name}, occasion: ${occasion}. Details: ${memories}`,
-            tags: `${genre}, ${occasion}`,
-            title: `Song for ${name}`,
+            gpt_description_prompt: `${genre} song for ${name}, celebrating ${occasion}. Details: ${memories}`.substring(0, 195),
+            tags: `${genre}, ${occasion}`.substring(0, 195),
+            title: `Song for ${name}`.substring(0, 75),
             mv: 'sonic-v3-5'
         };
 
@@ -83,16 +84,16 @@ app.post('/generate-song', async function(req, res) {
             }
         });
 
-        const token = (musicApiResponse.data && musicApiResponse.data.taskId) || ('sample_token_' + Date.now());
+        const token = (musicApiResponse.data && (musicApiResponse.data.taskId || musicApiResponse.data.task_id)) || ('sample_token_' + Date.now());
 
         return res.json({ success: true, token: token });
 
     } catch (err) {
-        console.error('MusicAPI detailed error response:', err.response?.data);
-        const detailedError = err.response?.data?.error || err.response?.data?.message || err.message || 'Internal Server Error';
+        console.error('Generation error:', err.response?.data || err.message);
+        const errorMsg = err.response?.data?.error || err.response?.data?.message || err.message || 'Internal Server Error';
         return res.status(500).json({ 
             success: false, 
-            error: typeof detailedError === 'object' ? JSON.stringify(detailedError) : detailedError
+            error: typeof errorMsg === 'object' ? JSON.stringify(errorMsg) : errorMsg
         });
     }
 });
