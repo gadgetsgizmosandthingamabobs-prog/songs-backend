@@ -8,12 +8,10 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Health check route
 app.get('/', function(req, res) {
     res.send('Songs From Your Heart Backend is running and online!');
 });
 
-// Primary song generation endpoint
 app.post('/api/generate-song', async function(req, res) {
     try {
         const { name, occasion, genre, memories } = req.body || {};
@@ -27,13 +25,17 @@ app.post('/api/generate-song', async function(req, res) {
             return res.status(500).json({ success: false, error: 'Server API key not configured.' });
         }
 
-        // Request payload with required 'mv' model field included
-        const musicApiResponse = await axios.post('https://api.musicapi.ai/api/v1/sonic/create', {
+        // Standardized payload structure
+        const payload = {
             prompt: `${genre} song for ${name}, occasion: ${occasion}. Details: ${memories}`,
             tags: `${genre}, ${occasion}`,
             title: `Song for ${name}`,
             mv: 'sonic-v3-5'
-        }, {
+        };
+
+        console.log('Sending payload to MusicAPI:', payload);
+
+        const musicApiResponse = await axios.post('https://api.musicapi.ai/api/v1/sonic/create', payload, {
             headers: {
                 'Authorization': `Bearer ${apiKey}`,
                 'Content-Type': 'application/json'
@@ -45,15 +47,15 @@ app.post('/api/generate-song', async function(req, res) {
         return res.json({ success: true, token: token });
 
     } catch (err) {
-        console.error('Generation error:', err.response?.data || err.message);
+        console.error('MusicAPI detailed error response:', err.response?.data);
+        const detailedError = err.response?.data?.error || err.response?.data?.message || err.message || 'Internal Server Error';
         return res.status(500).json({ 
             success: false, 
-            error: err.response?.data?.error?.message || err.response?.data?.message || err.message || 'Internal Server Error'
+            error: typeof detailedError === 'object' ? JSON.stringify(detailedError) : detailedError
         });
     }
 });
 
-// Fallback route without /api prefix
 app.post('/generate-song', async function(req, res) {
     try {
         const { name, occasion, genre, memories } = req.body || {};
@@ -67,12 +69,14 @@ app.post('/generate-song', async function(req, res) {
             return res.status(500).json({ success: false, error: 'Server API key not configured.' });
         }
 
-        const musicApiResponse = await axios.post('https://api.musicapi.ai/api/v1/sonic/create', {
+        const payload = {
             prompt: `${genre} song for ${name}, occasion: ${occasion}. Details: ${memories}`,
             tags: `${genre}, ${occasion}`,
             title: `Song for ${name}`,
             mv: 'sonic-v3-5'
-        }, {
+        };
+
+        const musicApiResponse = await axios.post('https://api.musicapi.ai/api/v1/sonic/create', payload, {
             headers: {
                 'Authorization': `Bearer ${apiKey}`,
                 'Content-Type': 'application/json'
@@ -84,10 +88,11 @@ app.post('/generate-song', async function(req, res) {
         return res.json({ success: true, token: token });
 
     } catch (err) {
-        console.error('Generation error:', err.response?.data || err.message);
+        console.error('MusicAPI detailed error response:', err.response?.data);
+        const detailedError = err.response?.data?.error || err.response?.data?.message || err.message || 'Internal Server Error';
         return res.status(500).json({ 
             success: false, 
-            error: err.response?.data?.error?.message || err.response?.data?.message || err.message || 'Internal Server Error'
+            error: typeof detailedError === 'object' ? JSON.stringify(detailedError) : detailedError
         });
     }
 });
