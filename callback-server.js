@@ -1,103 +1,79 @@
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios');
+const fetch = require('node-fetch'); // Ensure node-fetch is installed or use native fetch in newer Node environments
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Health check route
-app.get('/', function(req, res) {
-    res.send('Songs From Your Heart Backend is running and online!');
-});
+// Main song generation endpoint
+app.post('/api/generate-song', async (req, res) => {
+  try {
+    const { name, occasion, genre, voice, memories } = req.body;
 
-// Primary song generation endpoint
-app.post('/api/generate-song', async function(req, res) {
-    try {
-        const { name, occasion, genre, memories } = req.body || {};
-
-        if (!name || !occasion || !genre || !memories) {
-            return res.status(400).json({ success: false, error: 'Missing required fields.' });
-        }
-
-        const apiKey = process.env.MUSIC_API_KEY || process.env.MUSICAPI_API_KEY;
-        if (!apiKey) {
-            return res.status(500).json({ success: false, error: 'Server API key not configured.' });
-        }
-
-        // Exact MusicAPI payload contract format
-        const payload = {
-            gpt_description_prompt: `${genre} song for ${name}, celebrating ${occasion}. Details: ${memories}`.substring(0, 195),
-            tags: `${genre}, ${occasion}`.substring(0, 195),
-            title: `Song for ${name}`.substring(0, 75),
-            mv: 'sonic-v3-5'
-        };
-
-        const musicApiResponse = await axios.post('https://api.musicapi.ai/api/v1/sonic/create', payload, {
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-            }
-        });
-
-        const token = (musicApiResponse.data && (musicApiResponse.data.taskId || musicApiResponse.data.task_id)) || ('sample_token_' + Date.now());
-
-        return res.json({ success: true, token: token });
-
-    } catch (err) {
-        console.error('Generation error:', err.response?.data || err.message);
-        const errorMsg = err.response?.data?.error || err.response?.data?.message || err.message || 'Internal Server Error';
-        return res.status(500).json({ 
-            success: false, 
-            error: typeof errorMsg === 'object' ? JSON.stringify(errorMsg) : errorMsg
-        });
+    // Validate incoming fields
+    if (!name || !occasion || !genre || !voice || !memories) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing required form fields.' 
+      });
     }
-});
 
-// Fallback route without /api prefix
-app.post('/generate-song', async function(req, res) {
-    try {
-        const { name, occasion, genre, memories } = req.body || {};
-
-        if (!name || !occasion || !genre || !memories) {
-            return res.status(400).json({ success: false, error: 'Missing required fields.' });
-        }
-
-        const apiKey = process.env.MUSIC_API_KEY || process.env.MUSICAPI_API_KEY;
-        if (!apiKey) {
-            return res.status(500).json({ success: false, error: 'Server API key not configured.' });
-        }
-
-        const payload = {
-            gpt_description_prompt: `${genre} song for ${name}, celebrating ${occasion}. Details: ${memories}`.substring(0, 195),
-            tags: `${genre}, ${occasion}`.substring(0, 195),
-            title: `Song for ${name}`.substring(0, 75),
-            mv: 'sonic-v3-5'
-        };
-
-        const musicApiResponse = await axios.post('https://api.musicapi.ai/api/v1/sonic/create', payload, {
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-            }
-        });
-
-        const token = (musicApiResponse.data && (musicApiResponse.data.taskId || musicApiResponse.data.task_id)) || ('sample_token_' + Date.now());
-
-        return res.json({ success: true, token: token });
-
-    } catch (err) {
-        console.error('Generation error:', err.response?.data || err.message);
-        const errorMsg = err.response?.data?.error || err.response?.data?.message || err.message || 'Internal Server Error';
-        return res.status(500).json({ 
-            success: false, 
-            error: typeof errorMsg === 'object' ? JSON.stringify(errorMsg) : errorMsg
-        });
+    // Build description prompt incorporating genre specifics (including Love Ballads)
+    let genreStyleInstruction = genre;
+    if (genre === 'Love Ballads') {
+      genreStyleInstruction = 'Romantic Love Ballad, emotional heartfelt vocals, soaring melodic chorus, lush acoustic and orchestral arrangement';
     }
+
+    const gptDescriptionPrompt = `Create a custom song for ${name}. Occasion: ${occasion}. Musical Style/Genre: ${genreStyleInstruction}. Specific memories and details to include: ${memories}.`;
+
+    const tags = `${genre}, ${occasion}, custom song, emotional`;
+    const title = `Song for ${name} - ${occasion}`;
+
+    // Construct payload required for MusicAPI endpoint
+    const musicApiPayload = {
+      gpt_description_prompt: gptDescriptionPrompt,
+      tags: tags,
+      title: title,
+      mv: 'sonic-v3-5',
+      voice: voice
+    };
+
+    // Call MusicAPI endpoint
+    const musicApiResponse = await fetch('https://api.musicapi.ai/api/v1/sonic/create', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // 'Authorization': 'Bearer YOUR_MUSIC_API_KEY' // Un-comment and add your API key header if required by your setup
+      },
+      body: JSON.stringify(musicApiPayload)
+    });
+
+    const musicApiData = await musicApiResponse.json();
+
+    if (!musicApiResponse.ok) {
+      throw new Error(musicApiData.message || 'MusicAPI service rejected the generation request.');
+    }
+
+    // Return success response back to frontend
+    return res.status(200).json({
+      success: true,
+      message: 'Song generation task successfully initiated.',
+      data: musicApiData
+    });
+
+  } catch (err) {
+    console.error('Error in /api/generate-song:', err.message);
+    return res.status(500).json({ 
+      success: false, 
+      error: err.message || 'Internal server error while communicating with MusicAPI.' 
+    });
+  }
 });
 
-app.listen(PORT, function() {
-    console.log('Server is running smoothly on port ' + PORT);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Backend server is running and listening on port ${PORT}`);
 });
